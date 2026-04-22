@@ -169,6 +169,39 @@ audio.show { display:block; }
 .msg.ok { display:block; background:#1a2e0e; border:1px solid #3d6b1e; color:#8bc34a; }
 .msg.err { display:block; background:#2e0e0e; border:1px solid #6b1e1e; color:#e57373; }
 
+/* VOLUME SLIDER */
+.vol-wrap { display:flex; align-items:center; gap:8px; }
+.vol-wrap svg { opacity:.35; flex-shrink:0; }
+#volSlider {
+  -webkit-appearance:none; appearance:none;
+  width:72px; height:3px; border-radius:2px;
+  background:var(--border); outline:none; cursor:pointer;
+}
+#volSlider::-webkit-slider-thumb {
+  -webkit-appearance:none; appearance:none;
+  width:12px; height:12px; border-radius:50%;
+  background:var(--accent); cursor:pointer;
+}
+#volSlider::-moz-range-thumb {
+  width:12px; height:12px; border-radius:50%;
+  background:var(--accent); cursor:pointer; border:none;
+}
+
+/* CARD META ROW */
+.card-meta { display:flex; align-items:center; justify-content:space-between; margin-top:6px; }
+.card-dur { font-size:.6rem; color:var(--muted); }
+.card-btns { display:flex; gap:4px; }
+.card-pin, .card-key {
+  background:transparent; color:var(--muted); border:1px solid var(--border);
+  font-size:.58rem; padding:2px 6px; border-radius:2px; line-height:1.5;
+  opacity:0; transition:opacity .15s, color .15s, border-color .15s;
+}
+.card:hover .card-pin,
+.card:hover .card-key { opacity:1; }
+.card-pin.active,
+.card-key.active { color:var(--accent); border-color:var(--accent); opacity:1; }
+.card-key.assigning { color:var(--accent2); border-color:var(--accent2); opacity:1; animation:breathe 1s infinite; }
+
 /* LOGIN */
 .login-wrap { display:flex; flex-direction:column; gap:14px; }
 </style>
@@ -177,7 +210,13 @@ audio.show { display:block; }
 
 <header>
   <div class="logo">SOUND<span>BOARD</span></div>
-  <button class="btn-admin" onclick="openAdmin()">⚙ Admin</button>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div class="vol-wrap">
+      <svg width="13" height="13" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+      <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1" oninput="setVolume(+this.value)"/>
+    </div>
+    <button class="btn-admin" onclick="openAdmin()">⚙ Admin</button>
+  </div>
 </header>
 
 <div class="controls">
@@ -297,14 +336,24 @@ function render() {
     return;
   }
 
+  filtered.sort((a, b) => (pinned.has(b.id) ? 1 : 0) - (pinned.has(a.id) ? 1 : 0));
+
   grid.innerHTML = filtered.map(s => `
     <div class="card" id="card-${s.id}" onclick="playSound('${s.id}', '/sounds/${s.filename}')">
       <div class="pip"></div>
       <div class="card-icon">🔊</div>
       <div class="card-name">${escHtml(s.name)}</div>
       <div class="card-cat">${escHtml(s.category)}</div>
+      <div class="card-meta">
+        <div class="card-dur" id="dur-${s.id}">${durations[s.id] || ''}</div>
+        <div class="card-btns">
+          <button class="card-pin${pinned.has(s.id)?' active':''}" onclick="togglePin('${s.id}',event)" title="Pin to top">★</button>
+          <button class="card-key${keybindings[s.id]?' active':''}" onclick="startKeyAssign('${s.id}',event)" title="Assign keyboard shortcut">${keybindings[s.id] ? escHtml(keybindings[s.id]) : '+'}</button>
+        </div>
+      </div>
     </div>
   `).join('');
+  loadDurations(filtered);
 }
 
 function setCategory(cat) {
@@ -326,6 +375,7 @@ function playSound(id, url) {
   }
   const card = document.getElementById('card-' + id);
   const audio = new Audio(url);
+  audio.volume = globalVolume;
   currentAudio = audio;
   currentCard = card;
   card.classList.add('playing');
@@ -519,6 +569,93 @@ function showMsg(id, text, ok) {
   setTimeout(() => { el.className = 'msg'; }, 3500);
 }
 
+// ── VOLUME ────────────────────────────────────
+let globalVolume = parseFloat(localStorage.getItem('volume') ?? '1');
+
+function setVolume(v) {
+  globalVolume = v;
+  localStorage.setItem('volume', v);
+  if (currentAudio) currentAudio.volume = v;
+}
+
+// ── PINNED ────────────────────────────────────
+let pinned = new Set(JSON.parse(localStorage.getItem('pinned') || '[]'));
+
+function togglePin(id, e) {
+  e.stopPropagation();
+  pinned.has(id) ? pinned.delete(id) : pinned.add(id);
+  localStorage.setItem('pinned', JSON.stringify([...pinned]));
+  render();
+}
+
+// ── KEYBINDINGS ───────────────────────────────
+let keybindings = JSON.parse(localStorage.getItem('keybindings') || '{}');
+let pendingKeyAssign = null;
+
+function startKeyAssign(id, e) {
+  e.stopPropagation();
+  if (pendingKeyAssign === id) { cancelKeyAssign(); return; }
+  cancelKeyAssign();
+  pendingKeyAssign = id;
+  const btn = document.querySelector(`#card-${id} .card-key`);
+  if (btn) { btn.textContent = '…'; btn.classList.add('assigning'); }
+}
+
+function cancelKeyAssign() {
+  if (!pendingKeyAssign) return;
+  const btn = document.querySelector(`#card-${pendingKeyAssign} .card-key`);
+  if (btn) {
+    btn.textContent = keybindings[pendingKeyAssign] || '+';
+    btn.classList.remove('assigning');
+  }
+  pendingKeyAssign = null;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'Escape') { cancelKeyAssign(); return; }
+
+  const label = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+
+  if (pendingKeyAssign) {
+    e.preventDefault();
+    Object.keys(keybindings).forEach(k => { if (keybindings[k] === label) delete keybindings[k]; });
+    keybindings[pendingKeyAssign] = label;
+    localStorage.setItem('keybindings', JSON.stringify(keybindings));
+    pendingKeyAssign = null;
+    render();
+    return;
+  }
+
+  const entry = Object.entries(keybindings).find(([, k]) => k === label);
+  if (entry) {
+    const sound = sounds.find(s => s.id === entry[0]);
+    if (sound) { e.preventDefault(); playSound(sound.id, '/sounds/' + sound.filename); }
+  }
+});
+
+// ── DURATIONS ─────────────────────────────────
+const durations = {};
+
+function loadDurations(list) {
+  list.forEach(s => {
+    if (s.id in durations) return;
+    durations[s.id] = '';
+    const a = new Audio('/sounds/' + s.filename);
+    a.addEventListener('loadedmetadata', () => {
+      durations[s.id] = isFinite(a.duration) ? fmtDur(a.duration) : '';
+      const el = document.getElementById('dur-' + s.id);
+      if (el) el.textContent = durations[s.id];
+    });
+  });
+}
+
+function fmtDur(s) {
+  return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+}
+
+// ── INIT ──────────────────────────────────────
+document.getElementById('volSlider').value = globalVolume;
 loadSounds();
 </script>
 </body>
