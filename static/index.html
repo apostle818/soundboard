@@ -255,6 +255,7 @@ let adminPassword = '';
 let mediaRecorder = null;
 let recordedChunks = [];
 let recordedBlob = null;
+let recExt = '.webm';
 let isRecording = false;
 let currentAudio = null;
 let currentCard = null;
@@ -388,10 +389,14 @@ async function toggleRecord() {
     recordedBlob = null;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(stream);
+      const preferredMime = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4']
+        .find(t => MediaRecorder.isTypeSupported(t)) || '';
+      mediaRecorder = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : {});
+      const recMime = mediaRecorder.mimeType || 'audio/webm';
+      recExt = recMime.includes('ogg') ? '.ogg' : recMime.includes('mp4') ? '.m4a' : '.webm';
       mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
       mediaRecorder.onstop = () => {
-        recordedBlob = new Blob(recordedChunks, { type: 'audio/webm' });
+        recordedBlob = new Blob(recordedChunks, { type: recMime });
         const url = URL.createObjectURL(recordedBlob);
         const preview = document.getElementById('recPreview');
         preview.src = url;
@@ -422,7 +427,7 @@ async function submitRecording() {
   fd.append('password', adminPassword);
   fd.append('name', name);
   fd.append('category', cat);
-  fd.append('file', recordedBlob, 'recording.webm');
+  fd.append('file', recordedBlob, 'recording' + recExt);
 
   const r = await fetch('/api/sounds', { method: 'POST', body: fd });
   if (r.ok) {

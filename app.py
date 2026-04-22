@@ -81,9 +81,18 @@ def delete_sound(sound_id):
     save_db(db)
     return jsonify({"ok": True})
 
+MIME_TYPES = {
+    '.webm': 'audio/webm',
+    '.mp3':  'audio/mpeg',
+    '.wav':  'audio/wav',
+    '.ogg':  'audio/ogg',
+    '.m4a':  'audio/mp4',
+}
+
 @app.route("/sounds/<filename>")
 def serve_sound(filename):
-    return send_from_directory(SOUNDS_DIR, filename)
+    mime = MIME_TYPES.get(Path(filename).suffix.lower(), 'application/octet-stream')
+    return send_from_directory(SOUNDS_DIR, filename, mimetype=mime)
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
