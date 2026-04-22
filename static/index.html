@@ -343,12 +343,21 @@ function closeAdmin() {
   document.getElementById('overlay').classList.remove('open');
 }
 
-function doLogin() {
+async function doLogin() {
   const pw = document.getElementById('pwInput').value;
   if (!pw) return;
-  adminPassword = pw;
-  // verify by trying a dummy request — we'll just unlock UI, server validates on action
-  showAdminPanel();
+  const msg = document.getElementById('loginMsg');
+  msg.textContent = '';
+  try {
+    const r = await fetch('/api/auth', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pw})
+    });
+    if (!r.ok) { msg.textContent = 'Wrong password.'; return; }
+    adminPassword = pw;
+    showAdminPanel();
+  } catch { msg.textContent = 'Server error.'; }
 }
 
 function showAdminPanel() {

@@ -27,6 +27,13 @@ def save_db(data):
 def index():
     return send_file("static/index.html")
 
+@app.route("/api/auth", methods=["POST"])
+def auth():
+    data = request.json or {}
+    if data.get("password") != ADMIN_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({"ok": True})
+
 @app.route("/api/sounds", methods=["GET"])
 def get_sounds():
     return jsonify(load_db())
