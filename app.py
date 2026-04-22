@@ -1,13 +1,16 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
+from dotenv import load_dotenv
 import json
 import os
 import uuid
 from pathlib import Path
 
+load_dotenv()
+
 app = Flask(__name__, static_folder='static')
 
 # --- Config ---
-ADMIN_PASSWORD = "changeme123"   # Change this!
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 SOUNDS_DIR = Path("sounds")
 DB_FILE = Path("sounds_db.json")
 SOUNDS_DIR.mkdir(exist_ok=True)

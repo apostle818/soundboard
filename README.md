@@ -19,16 +19,19 @@ soundboard/
 ### 1. Install dependencies
 
 ```bash
-pip install flask
+pip install -r requirements.txt
 ```
 
 ### 2. Set your admin password
 
-Open `app.py` and change this line near the top:
+Copy the example config and edit it:
 
-```python
-ADMIN_PASSWORD = "changeme123"   # << CHANGE THIS
+```bash
+cp .env.example .env
+nano .env   # set ADMIN_PASSWORD=yourpassword
 ```
+
+`.env` is gitignored — it will never be overwritten by `git pull`.
 
 ### 3. Run
 
@@ -121,8 +124,11 @@ pip install -r requirements.txt
 ### 5. Set your admin password
 
 ```bash
-nano app.py   # change ADMIN_PASSWORD = "changeme123" at the top
+cp .env.example .env
+nano .env   # set ADMIN_PASSWORD=yourpassword
 ```
+
+`.env` is gitignored — `git pull` will never overwrite it.
 
 ### 6. Run with gunicorn as a systemd service
 
