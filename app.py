@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from dotenv import load_dotenv
+import io
 import json
 import os
 import uuid
+import zipfile
 from pathlib import Path
 
 load_dotenv()
@@ -65,6 +67,25 @@ def add_sound():
     save_db(db)
     return jsonify(entry), 201
 
+@app.route("/api/sounds/<sound_id>", methods=["PATCH"])
+def update_sound(sound_id):
+    data = request.json or {}
+    if data.get("password") != ADMIN_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = load_db()
+    entry = next((s for s in db if s["id"] == sound_id), None)
+    if not entry:
+        return jsonify({"error": "Not found"}), 404
+
+    if "name" in data:
+        entry["name"] = data["name"].strip() or entry["name"]
+    if "category" in data:
+        entry["category"] = data["category"].strip() or entry["category"]
+
+    save_db(db)
+    return jsonify(entry)
+
 @app.route("/api/sounds/<sound_id>", methods=["DELETE"])
 def delete_sound(sound_id):
     data = request.json or {}
@@ -88,6 +109,23 @@ MIME_TYPES = {
     '.ogg':  'audio/ogg',
     '.m4a':  'audio/mp4',
 }
+
+@app.route("/api/backup", methods=["POST"])
+def backup():
+    data = request.json or {}
+    if data.get("password") != ADMIN_PASSWORD:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if DB_FILE.exists():
+            zf.write(DB_FILE, "sounds_db.json")
+        for f in sorted(SOUNDS_DIR.iterdir()):
+            if f.is_file():
+                zf.write(f, f"sounds/{f.name}")
+    buf.seek(0)
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name="soundboard-backup.zip")
 
 @app.route("/sounds/<filename>")
 def serve_sound(filename):

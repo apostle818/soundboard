@@ -162,6 +162,27 @@ audio.show { display:block; }
   padding:4px 9px; font-size:.65rem; letter-spacing:1px; opacity:.6;
 }
 .btn-del:hover { opacity:1; }
+.btn-edit {
+  background:transparent; color:var(--muted); border:1px solid var(--border);
+  padding:4px 9px; font-size:.65rem; letter-spacing:1px; opacity:.6;
+}
+.btn-edit:hover { opacity:1; color:var(--text); }
+.btn-save { background:var(--accent); color:#000; padding:4px 10px; font-size:.65rem; letter-spacing:1px; }
+.btn-xs { background:transparent; color:var(--muted); border:1px solid var(--border); padding:4px 8px; font-size:.65rem; }
+.btn-xs:hover { color:var(--text); }
+.row-check { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; flex-shrink:0; }
+.edit-fields { display:flex; flex-direction:column; gap:5px; flex:1; }
+.edit-input {
+  background:var(--bg); border:1px solid var(--border); color:var(--text);
+  font-family:'DM Mono',monospace; font-size:.75rem; padding:5px 8px;
+  border-radius:var(--r); outline:none; width:100%;
+}
+.edit-input:focus { border-color:var(--accent); }
+.bulk-bar {
+  display:flex; align-items:center; gap:10px;
+  padding:10px 0; border-top:1px solid var(--border); margin-top:6px;
+}
+.bulk-bar span { font-size:.72rem; color:var(--muted); flex:1; }
 
 .msg {
   font-size:.75rem; padding:9px 12px; border-radius:var(--r); margin-bottom:12px; display:none;
@@ -281,8 +302,16 @@ audio.show { display:block; }
       <button class="btn-ghost" onclick="closeAdmin()">CLOSE</button>
 
       <div class="divider"></div>
-      <div class="section-label">Manage sounds</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="section-label" style="margin-bottom:0">Manage sounds</div>
+        <button class="btn-xs" onclick="downloadBackup()">↓ Backup</button>
+      </div>
       <div id="soundList"></div>
+      <div class="bulk-bar" id="bulkBar" style="display:none">
+        <span id="bulkCount"></span>
+        <button class="btn-del" onclick="deleteSelected()">DELETE SELECTED</button>
+        <button class="btn-xs" onclick="clearSelection()">CLEAR</button>
+      </div>
     </div>
   </div>
 </div>
@@ -525,18 +554,91 @@ async function submitUpload() {
 
 // ── MANAGE SOUNDS ─────────────────────────────
 
+let selectedIds = new Set();
+
 function refreshSoundList() {
+  selectedIds.clear();
+  updateBulkBar();
   const el = document.getElementById('soundList');
   if (!sounds.length) { el.innerHTML = '<div style="color:var(--muted);font-size:.75rem">No sounds yet.</div>'; return; }
   el.innerHTML = sounds.map(s => `
-    <div class="sound-row">
+    <div class="sound-row" id="row-${s.id}">
+      <input type="checkbox" class="row-check" onchange="toggleSelect('${s.id}')"/>
       <div class="sound-row-info">
         <div class="sound-row-name">${escHtml(s.name)}</div>
         <div class="sound-row-cat">${escHtml(s.category)}</div>
       </div>
-      <button class="btn-del" onclick="deleteSound('${s.id}')">DELETE</button>
+      <button class="btn-edit" onclick="startEdit('${s.id}')">EDIT</button>
+      <button class="btn-del" onclick="deleteSound('${s.id}')">DEL</button>
     </div>
   `).join('');
+}
+
+function startEdit(id) {
+  const s = sounds.find(s => s.id === id);
+  if (!s) return;
+  document.getElementById('row-' + id).innerHTML = `
+    <div class="edit-fields">
+      <input class="edit-input" id="ename-${id}" value="${escHtml(s.name)}" placeholder="Name"/>
+      <input class="edit-input" id="ecat-${id}" value="${escHtml(s.category)}" placeholder="Category" list="catList"/>
+    </div>
+    <button class="btn-save" onclick="saveEdit('${id}')">SAVE</button>
+    <button class="btn-xs" onclick="refreshSoundList()">✕</button>
+  `;
+  document.getElementById('ename-' + id).focus();
+}
+
+async function saveEdit(id) {
+  const name = document.getElementById('ename-' + id).value.trim();
+  const cat  = document.getElementById('ecat-'  + id).value.trim() || 'General';
+  if (!name) return;
+  const r = await fetch('/api/sounds/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ password: adminPassword, name, category: cat })
+  });
+  if (r.ok) {
+    await loadSounds();
+    refreshSoundList();
+    updateCatDatalist();
+  } else {
+    const d = await r.json();
+    showMsg('adminMsg', d.error || 'Update failed.', false);
+  }
+}
+
+function toggleSelect(id) {
+  selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  if (!bar) return;
+  bar.style.display = selectedIds.size ? 'flex' : 'none';
+  const el = document.getElementById('bulkCount');
+  if (el) el.textContent = `${selectedIds.size} selected`;
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-check').forEach(c => c.checked = false);
+  updateBulkBar();
+}
+
+async function deleteSelected() {
+  if (!selectedIds.size) return;
+  if (!confirm(`Delete ${selectedIds.size} sound${selectedIds.size > 1 ? 's' : ''}?`)) return;
+  for (const id of [...selectedIds]) {
+    await fetch('/api/sounds/' + id, {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ password: adminPassword })
+    });
+  }
+  selectedIds.clear();
+  await loadSounds();
+  refreshSoundList();
 }
 
 async function deleteSound(id) {
@@ -553,6 +655,20 @@ async function deleteSound(id) {
     const d = await r.json();
     showMsg('adminMsg', d.error || 'Delete failed.', false);
   }
+}
+
+async function downloadBackup() {
+  const r = await fetch('/api/backup', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ password: adminPassword })
+  });
+  if (!r.ok) { showMsg('adminMsg', 'Backup failed.', false); return; }
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'soundboard-backup.zip'; a.click();
+  URL.revokeObjectURL(url);
 }
 
 function updateCatDatalist() {
