@@ -1,5 +1,6 @@
 sounds/
 sounds_db.json
+users.db
 __pycache__/
 *.pyc
 *.pyo

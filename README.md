@@ -121,14 +121,29 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 5. Set your admin password
+### 5. Set the secret key and create your first admin user
 
 ```bash
 cp .env.example .env
-nano .env   # set ADMIN_PASSWORD=yourpassword
+nano .env   # set SECRET_KEY to a long random string
 ```
 
-`.env` is gitignored — `git pull` will never overwrite it.
+Then create your first user:
+
+```bash
+source .venv/bin/activate
+python manage.py adduser yourname
+```
+
+To manage users later:
+
+```bash
+python manage.py list
+python manage.py passwd  yourname   # change password
+python manage.py remove  yourname   # delete user
+```
+
+`.env` and `users.db` are gitignored — `git pull` will never overwrite them.
 
 ### 6. Run with gunicorn as a systemd service
 
@@ -200,14 +215,24 @@ The app is now reachable on port **80**. Add a Proxmox port-forward or a reverse
 cd /opt/soundboard && git pull && .venv/bin/pip install -r requirements.txt && systemctl restart soundboard
 ```
 
-### 9. Persist audio across container rebuilds (optional)
+### 9. Persist data across container rebuilds (optional)
 
-Bind-mount a directory from the Proxmox host so audio files survive container deletion:
+Bind-mount directories from the Proxmox host so audio files and users survive container deletion:
 
 ```bash
 # On the Proxmox host — stop container first
 pct stop 200
-mkdir -p /mnt/soundboard-data
-pct set 200 -mp0 /mnt/soundboard-data,mp=/opt/soundboard/sounds
+mkdir -p /mnt/soundboard-sounds /mnt/soundboard-data
+pct set 200 -mp0 /mnt/soundboard-sounds,mp=/opt/soundboard/sounds
+pct set 200 -mp1 /mnt/soundboard-data,mp=/opt/soundboard/data
 pct start 200
 ```
+
+Then symlink `users.db` and `sounds_db.json` into the data mount inside the container:
+
+```bash
+ln -sf /opt/soundboard/data/users.db      /opt/soundboard/users.db
+ln -sf /opt/soundboard/data/sounds_db.json /opt/soundboard/sounds_db.json
+```
+
+> Fix ownership on the Proxmox host if needed: `chown 100000:100000 /mnt/soundboard-data`

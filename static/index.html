@@ -236,6 +236,7 @@ audio.show { display:block; }
       <svg width="13" height="13" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
       <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1" oninput="setVolume(+this.value)"/>
     </div>
+    <button class="btn-admin" onclick="copyShareLink()" id="shareBtn">⤴ Share</button>
     <button class="btn-admin" onclick="openAdmin()">⚙ Admin</button>
   </div>
 </header>
@@ -258,14 +259,19 @@ audio.show { display:block; }
     <div class="modal-title">ADMIN PANEL</div>
     <div id="loginWrap" class="login-wrap">
       <div class="field">
+        <label>Username</label>
+        <input type="text" id="unInput" placeholder="username" onkeydown="if(event.key==='Enter')document.getElementById('pwInput').focus()"/>
+      </div>
+      <div class="field">
         <label>Password</label>
-        <input type="password" id="pwInput" placeholder="enter admin password" onkeydown="if(event.key==='Enter')doLogin()"/>
+        <input type="password" id="pwInput" placeholder="password" onkeydown="if(event.key==='Enter')doLogin()"/>
       </div>
       <div class="msg" id="loginMsg"></div>
       <button class="btn-primary" onclick="doLogin()">UNLOCK</button>
       <button class="btn-ghost" onclick="closeAdmin()">CANCEL</button>
     </div>
     <div id="adminWrap" style="display:none">
+      <div id="adminUserLine" style="font-size:.68rem;color:var(--muted);margin-bottom:16px;letter-spacing:1px;"></div>
       <div class="msg" id="adminMsg"></div>
       <div class="mode-row">
         <button class="mode-btn active" id="modeRecord" onclick="setMode('record')">⏺ Record</button>
@@ -319,7 +325,8 @@ audio.show { display:block; }
 <script>
 let sounds = [];
 let activeCategory = 'all';
-let adminPassword = '';
+let authToken     = '';
+let adminUsername = '';
 let mediaRecorder = null;
 let recordedChunks = [];
 let recordedBlob = null;
@@ -417,25 +424,28 @@ function playSound(id, url) {
 
 function openAdmin() {
   document.getElementById('overlay').classList.add('open');
-  if (adminPassword) showAdminPanel();
+  if (authToken) showAdminPanel();
 }
 function closeAdmin() {
   document.getElementById('overlay').classList.remove('open');
 }
 
 async function doLogin() {
-  const pw = document.getElementById('pwInput').value;
-  if (!pw) return;
+  const username = document.getElementById('unInput').value.trim();
+  const pw       = document.getElementById('pwInput').value;
+  if (!username || !pw) return;
   const msg = document.getElementById('loginMsg');
   msg.textContent = '';
   try {
     const r = await fetch('/api/auth', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pw})
+      body: JSON.stringify({ username, password: pw })
     });
-    if (!r.ok) { msg.textContent = 'Wrong password.'; return; }
-    adminPassword = pw;
+    if (!r.ok) { msg.textContent = 'Invalid credentials.'; return; }
+    const d = await r.json();
+    authToken     = d.token;
+    adminUsername = d.username;
     showAdminPanel();
   } catch { msg.textContent = 'Server error.'; }
 }
@@ -443,6 +453,7 @@ async function doLogin() {
 function showAdminPanel() {
   document.getElementById('loginWrap').style.display = 'none';
   document.getElementById('adminWrap').style.display = 'block';
+  document.getElementById('adminUserLine').textContent = `logged in as ${adminUsername}`;
   refreshSoundList();
   updateCatDatalist();
 }
@@ -503,7 +514,7 @@ async function submitRecording() {
   if (!name) { showMsg('adminMsg', 'Enter a name for the quote.', false); return; }
 
   const fd = new FormData();
-  fd.append('password', adminPassword);
+  fd.append('token', authToken);
   fd.append('name', name);
   fd.append('category', cat);
   fd.append('file', recordedBlob, 'recording' + recExt);
@@ -533,7 +544,7 @@ async function submitUpload() {
   if (!file) { showMsg('adminMsg', 'Select an audio file.', false); return; }
 
   const fd = new FormData();
-  fd.append('password', adminPassword);
+  fd.append('token', authToken);
   fd.append('name', name);
   fd.append('category', cat);
   fd.append('file', file);
@@ -595,7 +606,7 @@ async function saveEdit(id) {
   const r = await fetch('/api/sounds/' + id, {
     method: 'PATCH',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ password: adminPassword, name, category: cat })
+    body: JSON.stringify({ token: authToken, name, category: cat })
   });
   if (r.ok) {
     await loadSounds();
@@ -633,7 +644,7 @@ async function deleteSelected() {
     await fetch('/api/sounds/' + id, {
       method: 'DELETE',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ password: adminPassword })
+      body: JSON.stringify({ token: authToken })
     });
   }
   selectedIds.clear();
@@ -646,7 +657,7 @@ async function deleteSound(id) {
   const r = await fetch('/api/sounds/'+id, {
     method: 'DELETE',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({password: adminPassword})
+    body: JSON.stringify({token: authToken})
   });
   if (r.ok) {
     await loadSounds();
@@ -661,7 +672,7 @@ async function downloadBackup() {
   const r = await fetch('/api/backup', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ password: adminPassword })
+    body: JSON.stringify({ token: authToken })
   });
   if (!r.ok) { showMsg('adminMsg', 'Backup failed.', false); return; }
   const blob = await r.blob();
@@ -683,6 +694,17 @@ function showMsg(id, text, ok) {
   el.textContent = text;
   el.className = 'msg ' + (ok ? 'ok' : 'err');
   setTimeout(() => { el.className = 'msg'; }, 3500);
+}
+
+// ── SHARE ─────────────────────────────────────
+
+function copyShareLink() {
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    const btn = document.getElementById('shareBtn');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => btn.textContent = orig, 2000);
+  });
 }
 
 // ── VOLUME ────────────────────────────────────
