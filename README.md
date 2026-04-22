@@ -188,7 +188,13 @@ systemctl restart nginx
 
 The app is now reachable on port **80**. Add a Proxmox port-forward or a reverse proxy (e.g. Nginx Proxy Manager) on the host if you want it accessible from outside your LAN.
 
-### 8. Persist audio across container rebuilds (optional)
+### 8. Update the app
+
+```bash
+cd /opt/soundboard && git pull && systemctl restart soundboard
+```
+
+### 9. Persist audio across container rebuilds (optional)
 
 Bind-mount a directory from the Proxmox host so audio files survive container deletion:
 
