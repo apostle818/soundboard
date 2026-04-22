@@ -197,7 +197,7 @@ The app is now reachable on port **80**. Add a Proxmox port-forward or a reverse
 ### 8. Update the app
 
 ```bash
-cd /opt/soundboard && git pull && systemctl restart soundboard
+cd /opt/soundboard && git pull && .venv/bin/pip install -r requirements.txt && systemctl restart soundboard
 ```
 
 ### 9. Persist audio across container rebuilds (optional)
