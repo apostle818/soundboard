@@ -699,12 +699,25 @@ function showMsg(id, text, ok) {
 // ── SHARE ─────────────────────────────────────
 
 function copyShareLink() {
-  navigator.clipboard.writeText(window.location.href).then(() => {
-    const btn = document.getElementById('shareBtn');
+  const url = window.location.href;
+  const btn = document.getElementById('shareBtn');
+  const flash = () => {
     const orig = btn.textContent;
     btn.textContent = '✓ Copied';
     setTimeout(() => btn.textContent = orig, 2000);
-  });
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(flash);
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = url;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    flash();
+  }
 }
 
 // ── VOLUME ────────────────────────────────────
