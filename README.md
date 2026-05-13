@@ -59,19 +59,31 @@ gunicorn -w 4 -b 0.0.0.0:5000 app:app
 
 ## Usage
 
-- **Visitors** — click any sound card to play
-- **Admin** — click ⚙ Admin, enter your password, then:
-  - Record directly in browser (mic required)
-  - Upload audio files (mp3, wav, ogg, webm, m4a)
-  - Assign names and categories
-  - Delete sounds
+### Visitors
+
+- Click any tile to play; click again (or press `Space`) to stop
+- A floating **now-playing dock** shows name, duration, and progress while audio plays
+- Star a tile (★) to add it to **Favorites**, then filter to favorites with the pill
+- **Drag the grip handle** (top-right corner of a tile, visible on hover) to reorder
+- Search and category pills filter the grid in real time
+- **Keyboard:** `/` focuses search · `Esc` clears search · `Space` stops playback
+- Click the `+` on a tile to assign a one-key shortcut that plays it from anywhere
+
+### Admin
+
+Click **Admin**, log in, then:
+
+- Record directly in browser (mic required — silence is auto-trimmed)
+- Upload audio files (mp3, wav, ogg, webm, m4a)
+- Assign names and categories (categories are free-text, autocompleted from existing ones)
+- Edit a sound in place, bulk-select with checkboxes, or download a full backup zip
 
 ## Notes
 
 - Audio files are stored locally in the `sounds/` folder
-- No database needed — metadata is stored in `sounds_db.json`
-- Categories are free-text — just type them when adding a sound
+- No database needed for sounds — metadata is in `sounds_db.json`; user accounts live in `users.db` (SQLite)
 - Search filters by name and category in real time
+- **Browser-side state** — favorites, custom tile order, keybindings, pinned items, and volume are stored in `localStorage` per browser. They survive server redeploys but are not shared between devices/visitors. Clearing site data resets them.
 
 ---
 
