@@ -39,7 +39,7 @@ def users_conn():
 
 def check_token(data=None):
     if data is None:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
     token = data.get("token") or request.form.get("token")
     if not token:
         return None
@@ -66,7 +66,7 @@ def index():
 
 @app.route("/api/auth", methods=["POST"])
 def auth():
-    data     = request.json or {}
+    data     = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
 
@@ -111,7 +111,7 @@ def add_sound():
 
 @app.route("/api/sounds/<sound_id>", methods=["PATCH"])
 def update_sound(sound_id):
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     if not check_token(data):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -130,7 +130,7 @@ def update_sound(sound_id):
 
 @app.route("/api/sounds/<sound_id>", methods=["DELETE"])
 def delete_sound(sound_id):
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     if not check_token(data):
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -145,7 +145,7 @@ def delete_sound(sound_id):
 
 @app.route("/api/backup", methods=["POST"])
 def backup():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     if not check_token(data):
         return jsonify({"error": "Unauthorized"}), 401
 
