@@ -8,12 +8,14 @@ Usage:
   python manage.py list
 """
 import getpass
+import os
 import sqlite3
 import sys
 from pathlib import Path
 from werkzeug.security import generate_password_hash
 
-USERS_DB = Path("users.db")
+USERS_DB = Path(os.environ.get("SOUNDBOARD_USERS_DB", "users.db"))
+USERS_DB.parent.mkdir(parents=True, exist_ok=True)
 
 
 def conn():

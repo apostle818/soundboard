@@ -248,3 +248,105 @@ ln -sf /opt/soundboard/data/sounds_db.json /opt/soundboard/sounds_db.json
 ```
 
 > Fix ownership on the Proxmox host if needed: `chown 100000:100000 /mnt/soundboard-data`
+
+---
+
+## Deploy with Portainer (from GitHub)
+
+An alternative to the LXC flow above: deploy as a Docker stack directly from this repository using Portainer. The repo ships a `Dockerfile` and `docker-compose.yml` so Portainer can build and run the app with no extra configuration.
+
+> **HTTPS note.** Browser microphone recording (`getUserMedia`) requires HTTPS (or `localhost`). The stack itself only speaks plain HTTP on port 5000 — terminate TLS in your existing reverse proxy (Traefik, Nginx Proxy Manager, Caddy, …) pointing at `http://<docker-host>:5000`.
+
+### 1. Add the stack in Portainer
+
+1. **Stacks → Add stack → Repository.**
+2. Fill in:
+   - **Name:** `soundboard`
+   - **Repository URL:** `https://github.com/apostle818/soundboard`
+   - **Reference:** `refs/heads/main`
+   - **Compose path:** `docker-compose.yml`
+3. (Recommended) **Enable GitOps updates** so Portainer redeploys on every push (polling or webhook).
+4. Under **Environment variables**, add:
+   - `SECRET_KEY` — generate with `openssl rand -hex 32`
+   - `SOUNDBOARD_PORT` — optional, defaults to `5000`
+5. **Deploy the stack.**
+
+### 2. Create the first admin user
+
+Once the container is healthy:
+
+```bash
+docker exec -it soundboard python manage.py adduser yourname
+```
+
+Other user-management commands (`list`, `passwd`, `remove`) work the same way — just prefix them with `docker exec -it soundboard`.
+
+### 3. Put it behind your reverse proxy
+
+Point your existing TLS-terminating proxy at `http://<docker-host>:5000`. A minimal Traefik label set or NPM proxy host pointing at that upstream is enough; no special headers required beyond standard `Host` / `X-Forwarded-*` forwarding. Increase the upload size limit on the proxy (50 MB is a good starting point) to match the LXC nginx example above.
+
+### 4. Updating
+
+With GitOps updates enabled, push to `main` and Portainer redeploys automatically. Otherwise: **Stacks → soundboard → Pull and redeploy**.
+
+### Persistent data
+
+All state lives in the named volume `soundboard_data` (mounted at `/data` in the container):
+
+- `/data/sounds/` — uploaded audio files
+- `/data/sounds_db.json` — sound metadata
+- `/data/users.db` — user accounts
+
+The volume survives `docker compose down` and stack recreations. Back it up with any tool that can read a Docker volume (e.g. `docker run --rm -v soundboard_soundboard_data:/data -v $PWD:/backup alpine tar czf /backup/soundboard.tar.gz -C /data .`).
+
+---
+
+## Migrating from LXC to Portainer
+
+The LXC and Portainer deployments are interchangeable — they share the same storage layout (`sounds/` + `sounds_db.json` + `users.db`). To migrate:
+
+### 1. On the LXC: snapshot the state
+
+```bash
+systemctl stop soundboard
+cd /opt/soundboard
+tar czf /tmp/soundboard-state.tar.gz sounds sounds_db.json users.db
+```
+
+Also grab the existing `SECRET_KEY` from `/opt/soundboard/.env` — reuse it on the Portainer side so any active browser tokens stay valid.
+
+### 2. Copy the tarball to the Portainer host
+
+```bash
+scp /tmp/soundboard-state.tar.gz user@portainer-host:/tmp/
+```
+
+### 3. Deploy the Portainer stack once (to create the volume), then stop it
+
+Follow the Portainer steps above with the salvaged `SECRET_KEY`, deploy, then stop the stack from the Portainer UI. The `soundboard_data` volume now exists but is empty.
+
+### 4. Seed the volume from the tarball
+
+On the Portainer host:
+
+```bash
+docker run --rm \
+  -v soundboard_soundboard_data:/data \
+  -v /tmp/soundboard-state.tar.gz:/seed.tar.gz:ro \
+  alpine sh -c "cd /data && tar xzf /seed.tar.gz && chown -R 1000:1000 ."
+```
+
+> The volume name is `<stack-name>_soundboard_data` — Portainer prefixes volume names with the stack name. Confirm with `docker volume ls | grep soundboard`.
+
+### 5. Start the stack and verify
+
+Start it from Portainer, then end-to-end test:
+
+- Log in with an existing user → confirms `users.db` migrated.
+- Existing sounds appear in the grid → confirms `sounds_db.json` migrated.
+- A sound plays → confirms files under `sounds/` migrated.
+- Upload a new sound, restart the container, confirm it persists.
+
+### 6. Decommission the LXC
+
+Only after the Portainer instance has been running successfully for long enough to be confident. Until then, keep the LXC stopped (not deleted) as a rollback.

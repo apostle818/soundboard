@@ -15,14 +15,16 @@ load_dotenv()
 app = Flask(__name__, static_folder='static')
 
 # --- Config ---
-SOUNDS_DIR = Path("sounds")
-DB_FILE    = Path("sounds_db.json")
-USERS_DB   = Path("users.db")
+SOUNDS_DIR = Path(os.environ.get("SOUNDBOARD_SOUNDS_DIR", "sounds"))
+DB_FILE    = Path(os.environ.get("SOUNDBOARD_DB_FILE",    "sounds_db.json"))
+USERS_DB   = Path(os.environ.get("SOUNDBOARD_USERS_DB",   "users.db"))
 SECRET_KEY = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
 TOKEN_MAX_AGE = 86400  # 24 h
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
-SOUNDS_DIR.mkdir(exist_ok=True)
+SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
+DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+USERS_DB.parent.mkdir(parents=True, exist_ok=True)
 
 # --- Users DB ---
 def users_conn():
