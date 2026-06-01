@@ -1,0 +1,15 @@
+services:
+  soundboard:
+    build: .
+    image: soundboard:latest
+    container_name: soundboard
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY must be set - generate with openssl rand -hex 32}"
+    ports:
+      - "${SOUNDBOARD_PORT:-5000}:5000"
+    volumes:
+      - soundboard_data:/data
+
+volumes:
+  soundboard_data:
