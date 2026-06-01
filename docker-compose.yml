@@ -2,6 +2,7 @@ services:
   soundboard:
     build: .
     image: soundboard:latest
+    pull_policy: build
     container_name: soundboard
     restart: unless-stopped
     environment:
