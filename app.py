@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from dotenv import load_dotenv
+from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.security import check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import io
@@ -26,6 +27,10 @@ if not SECRET_KEY:
         "a generated key: it would silently invalidate every auth token on restart."
     )
 TOKEN_MAX_AGE = 86400  # 24 h
+
+# Cap request bodies so an upload cannot fill the disk. Applies to every route.
+MAX_UPLOAD_MB = int(os.environ.get("SOUNDBOARD_MAX_UPLOAD_MB", "25"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
 SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,6 +68,11 @@ def load_db():
 
 def save_db(data):
     DB_FILE.write_text(json.dumps(data, indent=2))
+
+# --- Errors ---
+@app.errorhandler(RequestEntityTooLarge)
+def request_too_large(_error):
+    return jsonify({"error": f"File too large (max {MAX_UPLOAD_MB} MB)"}), 413
 
 # --- Routes ---
 
