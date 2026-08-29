@@ -1,0 +1,3 @@
+# Dev/test-only dependencies (production install uses requirements.txt).
+-r requirements.txt
+pytest==9.1.1
