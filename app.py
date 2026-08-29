@@ -179,5 +179,14 @@ def serve_sound(filename):
     mime = MIME_TYPES.get(Path(filename).suffix.lower(), "application/octet-stream")
     return send_from_directory(SOUNDS_DIR, filename, mimetype=mime)
 
+def debug_enabled():
+    """Whether the dev server should run with the Werkzeug debugger.
+
+    The debugger is a remote code execution console, so it is opt-in via an
+    explicit env var and never the default. Production serves through gunicorn
+    (see Dockerfile) and does not reach this at all.
+    """
+    return os.environ.get("SOUNDBOARD_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=debug_enabled(), port=5000)
