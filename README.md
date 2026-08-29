@@ -140,6 +140,9 @@ cp .env.example .env
 nano .env   # set SECRET_KEY to a long random string
 ```
 
+`SECRET_KEY` is required — the app refuses to start without it. Generate one with
+`openssl rand -hex 32`. Changing it invalidates every issued auth token.
+
 Then create your first user:
 
 ```bash

@@ -18,7 +18,13 @@ app = Flask(__name__, static_folder='static')
 SOUNDS_DIR = Path(os.environ.get("SOUNDBOARD_SOUNDS_DIR", "sounds"))
 DB_FILE    = Path(os.environ.get("SOUNDBOARD_DB_FILE",    "sounds_db.json"))
 USERS_DB   = Path(os.environ.get("SOUNDBOARD_USERS_DB",   "users.db"))
-SECRET_KEY = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY is not set. Generate one with `openssl rand -hex 32` and put it "
+        "in the environment (or .env) before starting the app. Refusing to start with "
+        "a generated key: it would silently invalidate every auth token on restart."
+    )
 TOKEN_MAX_AGE = 86400  # 24 h
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
