@@ -74,7 +74,7 @@ gunicorn -w 4 -b 0.0.0.0:5000 app:app
 Click **Admin**, log in, then:
 
 - Record directly in browser (mic required — silence is auto-trimmed)
-- Upload audio files (mp3, wav, ogg, webm, m4a)
+- Upload audio files (mp3, wav, ogg, webm, m4a) — validated by content, not by filename, and capped at 25 MB
 - Assign names and categories (categories are free-text, autocompleted from existing ones)
 - Edit a sound in place, bulk-select with checkboxes, or download a full backup zip
 

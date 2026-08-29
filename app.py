@@ -69,6 +69,78 @@ def load_db():
 def save_db(data):
     DB_FILE.write_text(json.dumps(data, indent=2))
 
+# --- Upload validation ---
+# The extension a sound is stored under is decided by sniffing the file's magic
+# bytes; the client-supplied filename is only ever a hint. Nothing outside this
+# table can be stored or served.
+AUDIO_TYPES = {
+    ".mp3":  "audio/mpeg",
+    ".wav":  "audio/wav",
+    ".ogg":  "audio/ogg",
+    ".m4a":  "audio/mp4",
+    ".webm": "audio/webm",
+}
+SNIFF_BYTES = 4096
+EBML_MAGIC = b"\x1a\x45\xdf\xa3"
+# ISO-BMFF brands that carry audio we are willing to serve as audio/mp4.
+MP4_BRANDS = {b"M4A ", b"M4B ", b"mp41", b"mp42", b"isom", b"iso2", b"dash"}
+
+def _ebml_doctype(head):
+    """Read the DocType of an EBML header, so matroska cannot pass as webm."""
+    marker = head.find(b"\x42\x82", 0, 64)
+    if marker < 0 or len(head) <= marker + 2:
+        return None
+    size_byte = head[marker + 2]
+    if not size_byte & 0x80:       # real headers use a single-byte length here
+        return None
+    length = size_byte & 0x7F
+    return head[marker + 3:marker + 3 + length]
+
+def _has_mpeg_frame_sync(data):
+    if len(data) < 2 or data[0] != 0xFF or data[1] & 0xE0 != 0xE0:
+        return False
+    version = (data[1] >> 3) & 0x03
+    layer   = (data[1] >> 1) & 0x03
+    return version != 0x01 and layer != 0x00   # both values are reserved
+
+def _is_mp3(head, stream):
+    if head[:3] != b"ID3":
+        return _has_mpeg_frame_sync(head)
+    if len(head) < 10:
+        return False
+    size = 0
+    for byte in head[6:10]:
+        if byte & 0x80:            # ID3 sizes are syncsafe: high bit always clear
+            return False
+        size = (size << 7) | byte
+    offset = 10 + size + (10 if head[5] & 0x10 else 0)   # 0x10 = footer present
+    if offset + 2 <= len(head):
+        return _has_mpeg_frame_sync(head[offset:offset + 2])
+    stream.seek(offset)            # tag runs past the sniffed window
+    return _has_mpeg_frame_sync(stream.read(2))
+
+def sniff_audio_extension(stream):
+    """Return the allowlisted extension matching the stream's actual content.
+
+    Returns None when the bytes are not one of the audio containers we accept.
+    The stream is rewound before returning either way.
+    """
+    try:
+        head = stream.read(SNIFF_BYTES)
+        if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+            return ".wav"
+        if head[:4] == b"OggS":
+            return ".ogg"
+        if head[4:8] == b"ftyp" and head[8:12] in MP4_BRANDS:
+            return ".m4a"
+        if head[:4] == EBML_MAGIC and _ebml_doctype(head) == b"webm":
+            return ".webm"
+        if _is_mp3(head, stream):
+            return ".mp3"
+        return None
+    finally:
+        stream.seek(0)
+
 # --- Errors ---
 @app.errorhandler(RequestEntityTooLarge)
 def request_too_large(_error):
@@ -114,8 +186,20 @@ def add_sound():
     if "file" not in request.files:
         return jsonify({"error": "No audio file provided"}), 400
 
-    file     = request.files["file"]
-    ext      = Path(file.filename).suffix or ".webm"
+    file = request.files["file"]
+
+    # The filename is a hint only: reject anything claiming an extension we do
+    # not serve, then let the file's own bytes decide what it is stored as.
+    claimed = Path(file.filename or "").suffix.lower()
+    if claimed and claimed not in AUDIO_TYPES:
+        return jsonify({"error": f"Unsupported file extension '{claimed}'. "
+                                 f"Accepted: {', '.join(sorted(AUDIO_TYPES))}"}), 400
+
+    ext = sniff_audio_extension(file.stream)
+    if ext is None:
+        return jsonify({"error": "File is not recognisable audio. "
+                                 f"Accepted: {', '.join(sorted(AUDIO_TYPES))}"}), 400
+
     filename = f"{sound_id}{ext}"
     file.save(SOUNDS_DIR / filename)
 
@@ -176,18 +260,16 @@ def backup():
     return send_file(buf, mimetype="application/zip", as_attachment=True,
                      download_name="soundboard-backup.zip")
 
-MIME_TYPES = {
-    ".webm": "audio/webm",
-    ".mp3":  "audio/mpeg",
-    ".wav":  "audio/wav",
-    ".ogg":  "audio/ogg",
-    ".m4a":  "audio/mp4",
-}
-
 @app.route("/sounds/<filename>")
 def serve_sound(filename):
-    mime = MIME_TYPES.get(Path(filename).suffix.lower(), "application/octet-stream")
-    return send_from_directory(SOUNDS_DIR, filename, mimetype=mime)
+    mime = AUDIO_TYPES.get(Path(filename).suffix.lower())
+    if mime is None:
+        # Only allowlisted audio can be stored, so anything else here is junk
+        # left by an older upload path — never hand it back to a browser.
+        return jsonify({"error": "Not found"}), 404
+    resp = send_from_directory(SOUNDS_DIR, filename, mimetype=mime)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
 
 def debug_enabled():
     """Whether the dev server should run with the Werkzeug debugger.
