@@ -2,3 +2,8 @@ Flask==3.1.3
 Werkzeug==3.1.8
 gunicorn==23.0.0
 python-dotenv==1.2.3
+# app.py imports this directly (URLSafeTimedSerializer) for auth token
+# signing — it used to ride in only as a Flask transitive dependency.
+# Pinned explicitly since it is security-sensitive: the whole auth model
+# rests on it.
+itsdangerous==2.2.0
