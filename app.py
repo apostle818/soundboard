@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sqlite3
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -32,6 +33,12 @@ TOKEN_MAX_AGE = 86400  # 24 h
 MAX_UPLOAD_MB = int(os.environ.get("SOUNDBOARD_MAX_UPLOAD_MB", "25"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
+# Per-IP cap on /api/auth attempts, so the login form cannot be brute-forced
+# at line rate. Backed by SQLite (see rate_limited() below) rather than an
+# in-process counter so it holds across gunicorn's worker processes.
+AUTH_RATE_LIMIT  = int(os.environ.get("SOUNDBOARD_AUTH_RATE_LIMIT",  "10"))   # attempts
+AUTH_RATE_WINDOW = int(os.environ.get("SOUNDBOARD_AUTH_RATE_WINDOW", "300"))  # seconds
+
 signer = URLSafeTimedSerializer(SECRET_KEY)
 SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -45,8 +52,33 @@ def users_conn():
         username      TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS auth_attempts (
+        ip           TEXT NOT NULL,
+        attempted_at REAL NOT NULL
+    )""")
     conn.commit()
     return conn
+
+def rate_limited(ip):
+    """True if `ip` has already made AUTH_RATE_LIMIT /api/auth attempts within
+    the last AUTH_RATE_WINDOW seconds. Also records the current attempt (when
+    not already limited) and prunes rows outside the window, so the table
+    stays small and every gunicorn worker sees the same count.
+    """
+    now  = time.time()
+    cutoff = now - AUTH_RATE_WINDOW
+    conn = users_conn()
+    conn.execute("DELETE FROM auth_attempts WHERE attempted_at < ?", (cutoff,))
+    count = conn.execute(
+        "SELECT COUNT(*) FROM auth_attempts WHERE ip = ? AND attempted_at >= ?",
+        (ip, cutoff),
+    ).fetchone()[0]
+    limited = count >= AUTH_RATE_LIMIT
+    if not limited:
+        conn.execute("INSERT INTO auth_attempts (ip, attempted_at) VALUES (?, ?)", (ip, now))
+    conn.commit()
+    conn.close()
+    return limited
 
 def check_token(data=None):
     if data is None:
@@ -146,6 +178,38 @@ def sniff_audio_extension(stream):
 def request_too_large(_error):
     return jsonify({"error": f"File too large (max {MAX_UPLOAD_MB} MB)"}), 413
 
+# --- Security headers ---
+# The frontend is one hand-written HTML file that relies on inline
+# onclick="..." handlers and an inline <script> block (see static/index.html),
+# so a strict CSP without 'unsafe-inline' would break every button on the
+# page. This policy keeps that working while still doing real work: it stops
+# the page from being framed, blocks plugins/objects, and restricts script,
+# connect and media origins to this app plus the two Google Fonts hosts the
+# page already loads from.
+_CSP = ("default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        # blob: is needed for the in-browser recording preview (<audio> fed
+        # from a MediaRecorder blob via URL.createObjectURL — see static/index.html).
+        "media-src 'self' blob:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'")
+
+@app.after_request
+def set_security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Permissions-Policy",
+                             "microphone=(self), camera=(), geolocation=()")
+    resp.headers.setdefault("Content-Security-Policy", _CSP)
+    return resp
+
 # --- Routes ---
 
 @app.route("/")
@@ -154,6 +218,12 @@ def index():
 
 @app.route("/api/auth", methods=["POST"])
 def auth():
+    if rate_limited(request.remote_addr or "unknown"):
+        resp = jsonify({"error": f"Too many login attempts. Try again in "
+                                  f"{AUTH_RATE_WINDOW // 60} minutes."})
+        resp.headers["Retry-After"] = str(AUTH_RATE_WINDOW)
+        return resp, 429
+
     data     = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
