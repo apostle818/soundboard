@@ -57,6 +57,14 @@ and stays that way on purpose.
   way to create/remove users; there's no self-service signup and no in-app password reset by
   design — a small self-hosted single-family/small-group tool doesn't need one, but don't wire one
   up without also adding rate limiting and lockout to match.
+- **Every mutating route (`POST`/`PATCH`/`DELETE` under `/api/...`) must check `check_token(...)`
+  server-side and return 401 on failure** — never rely on the admin UI hiding a button. `GET
+  /api/sounds` and sound playback stay public by design (see the tradeoff below); don't
+  accidentally widen that exemption to a mutating route, or narrow the public read path without
+  an explicit decision to do so.
+- **Re-check pinned dependencies (Flask, Werkzeug, gunicorn, python-dotenv, itsdangerous, pytest)
+  for CVEs and EOL status at least every few months**, not only when a headline CVE prompts it —
+  bump with a commit message that names the advisory, as in `b65fa27`.
 
 ### Known, accepted tradeoffs (documented, not "fix this")
 
