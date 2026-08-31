@@ -1,71 +1,90 @@
 # CLAUDE.md
 
-## Security & privacy guidelines
+## Security
 
-These come out of a security audit of this repo (Aug 2026) and should guide
-any future change here.
+House rules from a repo security sweep on 2026-08-31, run after an earlier pass on this repo
+(`claude/flask-soundboard-security-2kdzfn`, merged as `3fede78`) had already closed the biggest
+issues: a required `SECRET_KEY` with no generated fallback, the Werkzeug debugger off by default,
+a request body size cap, and content-sniffed upload validation (extension is a hint only; the
+stored extension comes from the file's magic bytes, checked against an allowlist). Read `app.py`
+top-to-bottom before assuming something below still needs fixing — it is a single ~350-line file
+and stays that way on purpose.
 
-### Secrets
+### What this sweep added
 
-- `SECRET_KEY` must come from the environment (`.env`, or the Portainer /
-  systemd env) and must never have a code fallback (`os.urandom(...)` etc.).
-  `app.py` already raises at startup if it is missing — keep that behaviour,
-  don't "helpfully" generate one.
-- Never hardcode a password, API key, or token in `app.py`, `manage.py`, or
-  any test/fixture that resembles a real credential. The initial version of
-  this app shipped a hardcoded `ADMIN_PASSWORD = "changeme123"` — it was
-  replaced with per-user hashed passwords in `users.db`, but the old value is
-  still visible in `git log -p` history. Git history is effectively
-  permanent: assume anything ever committed is public, and rotate rather
-  than "fix" if it happens again.
-- `.env`, `users.db`, `sounds_db.json`, and `sounds/` are gitignored and
-  dockerignored — keep it that way, and never `git add -f` around it.
-- Pin every package that the app imports directly and relies on for security
-  behaviour (auth, signing, crypto) in `requirements.txt`, even if it would
-  otherwise arrive as a transitive dependency — see `Werkzeug` (pinned after
-  it was found to be transitive-only) and do the same for `itsdangerous`,
-  which `app.py` uses directly for token signing but which is currently only
-  pulled in transitively via Flask.
+- **`/api/auth` is now rate-limited per IP** (`rate_limited()` in `app.py`, backed by a SQLite
+  table so the count holds across gunicorn's multiple worker processes, not just one). Defaults:
+  10 attempts / 5 minutes, tunable via `SOUNDBOARD_AUTH_RATE_LIMIT` /
+  `SOUNDBOARD_AUTH_RATE_WINDOW`. Before this, the login endpoint had no throttle at all.
+- **`itsdangerous` is now pinned explicitly** in `requirements.txt`. `app.py` imports it directly
+  for `URLSafeTimedSerializer` — the entire auth-token mechanism — but it was previously present
+  only as a transitive dependency of Flask, so a Flask-only audit could resolve a different
+  `itsdangerous` version than what's actually running. Security-sensitive direct imports get
+  their own pin even when a parent package would drag them in anyway.
+- **Security response headers** are set for every response (`set_security_headers()` in `app.py`):
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  a restrictive `Permissions-Policy`, and a `Content-Security-Policy`. The CSP keeps
+  `'unsafe-inline'` for `script-src`/`style-src` because `static/index.html` is a single
+  hand-written file that leans on inline `onclick="..."` handlers and an inline `<script>` block —
+  a strict CSP without it would break the UI outright. What the CSP still buys: no framing
+  (`frame-ancestors 'none'`), no plugins/objects, no `<base>` hijacking, and script/connect/media
+  origins locked to this app plus the two Google Fonts hosts the page already loads from
+  (`media-src` additionally allows `blob:` for the in-browser recording preview).
 
-### Debug mode / production posture
+### Standing practices to preserve
 
-- `app.run(debug=...)` must never default to `True`. The Werkzeug debugger is
-  a remote code execution console when reachable. Keep `debug_enabled()`
-  opt-in via an explicit env var, and keep production on gunicorn (see
-  `Dockerfile`/`docker-compose.yml`), which never touches `app.run()` at all.
-- Don't add a `SOUNDBOARD_DEBUG`-style flag to the Docker/Portainer path.
-  Debug mode is for `python app.py` on a workstation only.
-- Run the container as the existing non-root `app` user; don't add anything
-  to the `Dockerfile` that needs `USER root` at runtime.
+- **Every new upload path must go through `sniff_audio_extension()`.** The client-supplied
+  filename is a hint only — never trust `file.filename`'s extension for what gets stored or how
+  it's served. `serve_sound()` re-derives the MIME type from the stored extension against the
+  `AUDIO_TYPES` allowlist; anything else 404s rather than being served back to a browser.
+- **`SECRET_KEY` has no fallback and must not get one.** `app.py` raises `RuntimeError` at import
+  time if it's unset or empty. Do not reintroduce `os.urandom()` as a default — that failure mode
+  (silently invalidating every issued token on restart) is exactly what the check exists to catch.
+- **The Werkzeug debugger stays opt-in.** `debug_enabled()` only returns `True` via the explicit
+  `SOUNDBOARD_DEBUG` env var; `app.run(debug=...)` must keep reading from that function, never a
+  literal `True`. Production runs through gunicorn (`Dockerfile` `CMD`) and never reaches
+  `app.run()` at all — keep it that way; don't let the dev server become the production path.
+- **New free-text rendered into `static/index.html` must go through `escHtml()`.** Every current
+  `innerHTML` write of user-controlled data (`name`, `category`, keybinding labels) is escaped;
+  keep that pattern for anything new — the CSP's `'unsafe-inline'` concession means it is not a
+  backstop for a missed escape.
+- **`MAX_CONTENT_LENGTH` bounds every request, not just uploads.** If a route ever needs to accept
+  something larger, raise it deliberately and explain why in a comment next to `MAX_UPLOAD_MB`,
+  don't just remove the cap.
+- **Docker runs as a non-root `app` user** (`Dockerfile`) and production is gunicorn with
+  `gthread` workers, not `flask run`. Preserve both if the Dockerfile changes.
+- **Auth is a single-table SQLite allowlist, not a role system.** `manage.py` is the only supported
+  way to create/remove users; there's no self-service signup and no in-app password reset by
+  design — a small self-hosted single-family/small-group tool doesn't need one, but don't wire one
+  up without also adding rate limiting and lockout to match.
+- **Every mutating route (`POST`/`PATCH`/`DELETE` under `/api/...`) must check `check_token(...)`
+  server-side and return 401 on failure** — never rely on the admin UI hiding a button. `GET
+  /api/sounds` and sound playback stay public by design (see the tradeoff below); don't
+  accidentally widen that exemption to a mutating route, or narrow the public read path without
+  an explicit decision to do so.
+- **Re-check pinned dependencies (Flask, Werkzeug, gunicorn, python-dotenv, itsdangerous, pytest)
+  for CVEs and EOL status at least every few months**, not only when a headline CVE prompts it —
+  bump with a commit message that names the advisory, as in `b65fa27`.
 
-### Uploads
+### Known, accepted tradeoffs (documented, not "fix this")
 
-- Audio uploads are validated by sniffing the file's actual bytes
-  (`sniff_audio_extension`), not by trusting the client-supplied filename or
-  `Content-Type`. Keep it that way for any new upload path — filename/MIME
-  is a hint only, never the basis for what gets stored or how it's served.
-  See `AUDIO_TYPES` for the full allowlist story.
-- Stored filenames are always a generated UUID + the sniffed extension —
-  never derive a stored filename from user input, to avoid path traversal.
-- Keep `MAX_CONTENT_LENGTH` (`SOUNDBOARD_MAX_UPLOAD_MB`) set on any route
-  that accepts a body, so a single upload can't fill the disk.
-- `/sounds/<filename>` only serves extensions present in `AUDIO_TYPES` and
-  sets `X-Content-Type-Options: nosniff`. Don't turn this into a general
-  static file server.
+- **Auth tokens are stateless (`itsdangerous`-signed, 24h TTL) with no server-side revocation.**
+  There is no session table, so there is no way to force-expire a token before it ages out short
+  of rotating `SECRET_KEY` (which invalidates *every* issued token, not just one). Acceptable for
+  the current scale (a handful of trusted household/friend admins); would need a real session
+  store to support per-user logout/revocation.
+- **The rate limiter is per-IP, not per-account**, and reads `request.remote_addr` directly. If
+  this is ever deployed behind a reverse proxy that doesn't preserve the real client IP, every
+  request will appear to come from the proxy and share one limit bucket — effectively disabling
+  the limiter for distinct attackers while still capping legitimate traffic. If that becomes the
+  deployment shape, this needs a trusted-hops-aware `X-Forwarded-For` parse (see how
+  `TRUSTED_PROXY_HOPS` is handled in sibling repos), not a blind trust of the header.
+- **`GET /api/sounds` and `GET /sounds/<filename>` are unauthenticated by design** — this is a
+  soundboard meant to be shared with visitors who don't have accounts. Don't "fix" this without
+  confirming that's actually a requirements change, not a bug.
 
-### Dependencies
+### Suspicious content check
 
-- `requirements.txt` / `requirements-dev.txt` pin every package. Re-check
-  Flask, Werkzeug, gunicorn, python-dotenv, itsdangerous, and pytest for
-  known CVEs and EOL status at least every few months, and whenever a
-  dependency bump is made anyway — bump with a commit message that names the
-  CVE/advisory, as in `b65fa27`.
-
-### Authorization
-
-- Every mutating route (`POST`/`PATCH`/`DELETE` under `/api/...`) must check
-  `check_token(...)` server-side and return 401 on failure — never rely on
-  the admin UI hiding a button. `GET /api/sounds` and sound playback stay
-  public by design (this is a shared soundboard); don't accidentally widen
-  that to the mutating routes or narrow it in a way that breaks the public
-  read path without an explicit decision to do so.
+No `AGENTS.md` or similar file exists anywhere in this repo, and no code comment, commit message,
+or README content attempts to redirect what an agent working here should do. Nothing found in
+this sweep or the prior one.
