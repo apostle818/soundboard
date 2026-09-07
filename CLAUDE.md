@@ -83,6 +83,55 @@ and stays that way on purpose.
   soundboard meant to be shared with visitors who don't have accounts. Don't "fix" this without
   confirming that's actually a requirements change, not a bug.
 
+### Sweep (2026-09-07)
+
+Re-verification pass plus one new fix. Re-checked line by line against the current `app.py`,
+`static/index.html`, `Dockerfile`, `requirements.txt` and git history rather than trusting the
+2026-08-31 notes above — all of the "What this sweep added" and "Standing practices" items still
+hold as described: `SECRET_KEY` still has no fallback and still raises `RuntimeError`; the
+Werkzeug debugger is still opt-in only via `SOUNDBOARD_DEBUG`; `MAX_CONTENT_LENGTH` still bounds
+every request; uploads are still validated by `sniff_audio_extension()` (magic bytes, not
+filename); every mutating `/api/...` route still calls `check_token(...)` server-side; the
+security headers and CSP are unchanged and still set on every response; the Docker image still
+runs as non-root `app` (uid 1000) via gunicorn, never `flask run`.
+
+- **Fixed — stored HTML/attribute injection in the category-pill renderer**
+  (`static/index.html`, the `renderGrid`/pills code). The pill button's `onclick` attribute
+  embedded a category name via `` onclick="setCategory(${JSON.stringify(c)})" `` — `JSON.stringify`
+  produces JavaScript-safe quoting (`\"`), not HTML-safe quoting, and this was the one spot in the
+  file where user-controlled text reached `innerHTML` without going through `escHtml()` first. A
+  category name containing a literal `"` (settable by anyone holding an auth token, since
+  `POST /api/sounds`/`PATCH /api/sounds/<id>` accept an unrestricted `category` string) would close
+  the attribute early and let the rest of the string inject arbitrary markup or a new event handler
+  into a page every anonymous visitor loads — and the CSP's `'unsafe-inline'` concession for
+  `script-src` (needed for the page's legitimate inline `onclick`s) means an injected inline handler
+  would have executed rather than being blocked. Every other dynamic value in this file already
+  went through `escHtml()`; this one only went through `JSON.stringify()`. Fixed by wrapping it —
+  `` onclick="setCategory(${escHtml(JSON.stringify(c))})" `` — so an embedded `"` becomes `&quot;`
+  instead of terminating the attribute. Regression guard: `tests/test_frontend_escaping.py` (asserts
+  the vulnerable pattern is gone and the fixed one is present, since this file has no build step or
+  JS test harness by design).
+- Re-ran `pip-audit` against `requirements.txt`: clean, no known vulnerabilities in Flask 3.1.3,
+  Werkzeug 3.1.8, gunicorn 23.0.0, python-dotenv 1.2.3, or itsdangerous 2.2.0. Checked the 2026
+  Flask/Werkzeug CVEs specifically: CVE-2026-27205 (Flask info disclosure) affects <=3.1.2, already
+  above it; CVE-2026-21860 (Werkzeug `safe_join` Windows device-name traversal) is fixed in 3.1.5,
+  already above it (and Windows-only regardless — this app deploys in a Linux container).
+  CVE-2026-40035 ("Flask debug mode RCE") turned out to be misfiled against an unrelated tool
+  (`obsidianforensics/unfurl`'s own config parsing), not Flask or this app — checked
+  `debug_enabled()` against that bug's actual shape (a truthy-string config parse) anyway; it
+  already uses an explicit allowlist (`{"1","true","yes","on"}`), not "any non-empty string enables
+  debug". No dependency version bump made — nothing here needed one.
+  `gunicorn` has a newer `26.2.0` release upstream; not bumped, since it is a major-version jump
+  with no CVE behind it and `pip-audit` is clean on 23.0.0 — re-evaluate next time an actual
+  advisory names it.
+- Ran the full `pytest` suite (86 tests after the new regression test): all green.
+- Re-scanned full git history (`git log --all -p`) for hardcoded secrets: nothing beyond what the
+  prior sweep already knew about — a pre-`3fede78`, long-removed `ADMIN_PASSWORD = "changeme123"`
+  placeholder (never a real credential, and superseded by the current `manage.py`/SQLite
+  argon2-hashed-user design). No `.env`, key, or certificate file ever committed.
+- No `AGENTS.md` or similar file found this pass either, and nothing in code comments, commit
+  messages, or docs attempts to redirect an agent's behavior.
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo, and no code comment, commit message,
