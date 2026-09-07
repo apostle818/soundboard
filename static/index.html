@@ -945,7 +945,7 @@ function render() {
   pillsHtml += `<button class="pill favs${activeCategory==='favs' ? ' active' : ''}" onclick="setCategory('favs')">★ Favorites</button>`;
   cats.forEach((c, i) => {
     const accent = `var(${ACCENT_VARS[i % ACCENT_VARS.length]})`;
-    pillsHtml += `<button class="pill${activeCategory===c ? ' active' : ''}" style="--pill-accent:${accent}" onclick="setCategory(${JSON.stringify(c)})"><span class="dot"></span>${escHtml(c)}</button>`;
+    pillsHtml += `<button class="pill${activeCategory===c ? ' active' : ''}" style="--pill-accent:${accent}" onclick="setCategory(${escHtml(JSON.stringify(c))})"><span class="dot"></span>${escHtml(c)}</button>`;
   });
   pillsEl.innerHTML = pillsHtml;
 
