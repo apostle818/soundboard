@@ -132,8 +132,64 @@ runs as non-root `app` (uid 1000) via gunicorn, never `flask run`.
 - No `AGENTS.md` or similar file found this pass either, and nothing in code comments, commit
   messages, or docs attempts to redirect an agent's behavior.
 
+### Sweep (2026-09-11)
+
+Re-verification pass plus one new fix. Re-checked line by line against the current `app.py`,
+`static/index.html`, `Dockerfile`, `requirements.txt` and git history — everything closed by the
+2026-08-31 and 2026-09-07 sweeps still holds: `SECRET_KEY` still has no fallback and raises
+`RuntimeError` if unset/empty; `debug_enabled()` still requires the explicit `SOUNDBOARD_DEBUG` env
+var against an allowlist of truthy strings, never a bare `True`; `MAX_CONTENT_LENGTH` still bounds
+every request; `sniff_audio_extension()` still validates uploads by magic bytes, with the claimed
+extension only ever a pre-filter; every mutating `/api/...` route still calls `check_token(...)`
+server-side and 401s on failure; the security headers and CSP are unchanged and set on every
+response; the Dockerfile still runs as non-root `app` (uid 1000) via gunicorn's `gthread` workers,
+never `flask run`; and the 2026-09-07 `escHtml(JSON.stringify(c))` fix on the category-pill
+`onclick` is still in place in `static/index.html:948` — no other dynamic value reaches an
+attribute or `innerHTML` write unescaped (`s.id` is a server-generated UUID, safe by construction;
+every other server-supplied string goes through `escHtml`).
+
+- `pip-audit -r requirements.txt`: **no known vulnerabilities**, versions unchanged from
+  2026-09-07 (Flask 3.1.3, Werkzeug 3.1.8, gunicorn 23.0.0, python-dotenv 1.2.3, itsdangerous
+  2.2.0; transitively blinker 1.9.0, click 8.5.0, jinja2 3.1.6, markupsafe 3.0.3 — also clean).
+  Checked PyPI directly: all five pinned packages are already at the newest release in their
+  line (Flask has no 3.1.4, Werkzeug's newest is still 3.1.8, python-dotenv and itsdangerous are
+  both at their latest overall). `gunicorn` has a newer `26.2.0` upstream but that is a
+  major-version jump with no CVE behind the pinned `23.0.0` — not bumped, same reasoning as
+  2026-09-07. No dependency changes made.
+- Re-checked the two specific CVEs this file has discussed before: CVE-2026-27205 (Flask info
+  disclosure, fixed above 3.1.2) and CVE-2026-21860 (Werkzeug `safe_join` Windows path traversal,
+  fixed in 3.1.5) — both assessments still hold at the currently pinned 3.1.3/3.1.8, and
+  `pip-audit`'s clean result against those exact pins is independent confirmation.
+- `rate_limited()`'s SQLite-backed per-IP counter: re-read `users_conn()`/`rate_limited()` —
+  every call opens a fresh connection against the on-disk `USERS_DB` path (not an in-process
+  dict), so the count is inherently shared by construction across however many gunicorn worker
+  processes read and write that same file. Still correct.
+- Re-scanned full git history (`git log -p --all` across all 38 commits, plus a `-S"changeme123"`
+  search) for secrets: nothing beyond the already-known pre-`3fede78` `ADMIN_PASSWORD =
+  "changeme123"` placeholder in `app.py`/`.env.example` (never a real credential, superseded by
+  the current per-user hashed `users.db` design). No `.env`, key, or certificate file ever
+  committed.
+- Ran the full `pytest` suite: 86 passed before this pass's change, 88 after (two new tests
+  added with the fix below).
+
+**Fixed — username enumeration via login response timing.** `/api/auth` returned as soon as the
+SQLite lookup found no row for an unknown username, but for a known username with the wrong
+password it additionally ran `check_password_hash`, which costs real time under werkzeug's default
+scrypt hashing (measured: roughly 100 ms per call on this machine, vs. sub-millisecond for the
+lookup alone). That gap is large enough to remotely distinguish "no such user" from "wrong
+password" by timing alone, letting an attacker enumerate valid usernames on a route whose error
+message is otherwise identical (`"Invalid credentials"` either way) and which is protected only by
+a per-IP — not per-account — rate limit, so enumeration itself isn't rate-limited by username.
+Fixed by checking a dummy password hash (`_DUMMY_PASSWORD_HASH`, generated once at import from a
+random value, never persisted, never a real credential) on the "no such user" path, so both paths
+call `check_password_hash` exactly once and take comparable time. This does not touch either
+documented accepted tradeoff on this route (the per-IP rate limiter, or the stateless tokens) —
+those are unrelated and were left exactly as they were. Regression tests:
+`tests/test_auth_timing.py` (asserts the call happens on both paths, functionally, rather than
+asserting on wall-clock timing — a timing assertion would be flaky under CI load).
+
 ### Suspicious content check
 
-No `AGENTS.md` or similar file exists anywhere in this repo, and no code comment, commit message,
-or README content attempts to redirect what an agent working here should do. Nothing found in
-this sweep or the prior one.
+No `AGENTS.md` or similar file exists anywhere in this repo (re-checked this pass), and no code
+comment, commit message, or README content attempts to redirect what an agent working here should
+do. Nothing found in this sweep or either of the prior two.

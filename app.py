@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import io
 import json
@@ -38,6 +38,15 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 # in-process counter so it holds across gunicorn's worker processes.
 AUTH_RATE_LIMIT  = int(os.environ.get("SOUNDBOARD_AUTH_RATE_LIMIT",  "10"))   # attempts
 AUTH_RATE_WINDOW = int(os.environ.get("SOUNDBOARD_AUTH_RATE_WINDOW", "300"))  # seconds
+
+# A never-used, never-persisted hash checked when the submitted username has
+# no row. werkzeug's default hashing (scrypt) costs real time — tens of
+# milliseconds — so a known-username-wrong-password request and an
+# unknown-username request would otherwise return in measurably different
+# times, letting /api/auth's response time enumerate which usernames have
+# accounts. Checking this dummy hash on the "no such user" path burns the
+# same time as the real check on the "wrong password" path.
+_DUMMY_PASSWORD_HASH = generate_password_hash(uuid.uuid4().hex)
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
 SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -234,7 +243,13 @@ def auth():
     ).fetchone()
     conn.close()
 
-    if not row or not check_password_hash(row[0], password):
+    if not row:
+        # Burn the same time a real check would take, so the response can't
+        # be timed to tell "no such user" apart from "wrong password".
+        check_password_hash(_DUMMY_PASSWORD_HASH, password)
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    if not check_password_hash(row[0], password):
         return jsonify({"error": "Invalid credentials"}), 401
 
     token = signer.dumps({"user": username})
