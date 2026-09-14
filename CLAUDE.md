@@ -188,6 +188,77 @@ those are unrelated and were left exactly as they were. Regression tests:
 `tests/test_auth_timing.py` (asserts the call happens on both paths, functionally, rather than
 asserting on wall-clock timing — a timing assertion would be flaky under CI load).
 
+### Sweep (2026-09-14)
+
+Scheduled re-verification pass, no new code changes. Re-checked line by line against the current
+`app.py`, `static/index.html`, `Dockerfile`, `requirements.txt`/`requirements-dev.txt` and git
+history rather than trusting the 2026-09-11 notes above — everything closed by the three prior
+sweeps still holds:
+
+- `SECRET_KEY` (`app.py`) still has no fallback and still raises `RuntimeError` if unset or empty.
+- `debug_enabled()` still gates the Werkzeug debugger on the explicit `SOUNDBOARD_DEBUG` env var
+  against the allowlist `{"1","true","yes","on"}`, never a bare `True`; `app.run(debug=...)` still
+  reads from it, and production still never reaches `app.run()` — the Dockerfile still runs
+  gunicorn, not `flask run`.
+- `MAX_CONTENT_LENGTH` (`app.config["MAX_CONTENT_LENGTH"]`, derived from `MAX_UPLOAD_MB`) is still
+  set once at import time and still applies to every request.
+- `sniff_audio_extension()` still decides the stored extension from magic bytes (`RIFF`/`WAVE`,
+  `OggS`, ISO-BMFF `ftyp` + an `MP4_BRANDS` allowlist, EBML with a `webm` DocType, or an MP3 frame
+  sync/ID3 check) — the client-claimed extension in `add_sound()` is still only a pre-filter
+  (rejected if disallowed, never trusted to decide what gets written to disk), and
+  `serve_sound()` still re-derives the MIME type from the *stored* extension against `AUDIO_TYPES`,
+  404ing on anything else.
+- Every mutating route under `/api/...` — `POST /api/sounds`, `PATCH /api/sounds/<id>`,
+  `DELETE /api/sounds/<id>`, `POST /api/backup` — still calls `check_token(...)` first and returns
+  401 on failure, traced by reading each route directly rather than grepping for the call.
+  `GET /api/sounds` and `GET /sounds/<filename>` remain intentionally unauthenticated, unchanged.
+- `set_security_headers()` and `_CSP` in `app.py` are byte-for-byte unchanged:
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, the
+  same restrictive `Permissions-Policy`, and the same CSP (`script-src`/`style-src` keep
+  `'unsafe-inline'` for the same documented reason, `media-src` still allows `blob:` for the
+  recording preview, `frame-ancestors 'none'`).
+- `Dockerfile` still creates and switches to the fixed unprivileged `app` user (uid/gid 1000)
+  before `CMD`, and `CMD` is still `gunicorn --worker-class gthread ...`, never `flask run`.
+- The 2026-09-07 `escHtml(JSON.stringify(c))` fix on the category-pill `onclick` is still in place
+  (`static/index.html:948`). Re-swept every `innerHTML` write and every dynamic value inside an
+  `onclick="..."` attribute in the file: every server-supplied string (`name`, `category`,
+  `filename`, `emoji`, keybinding labels) still goes through `escHtml()`; the only unescaped
+  dynamic values reaching an attribute or `innerHTML` are `s.id` (a server-generated UUID, safe by
+  construction) and `accent`, which is always one of a fixed `ACCENT_VARS` CSS-variable-name array
+  indexed by position — never user-controlled text.
+- The 2026-09-11 username-enumeration timing fix (`_DUMMY_PASSWORD_HASH`, checked via
+  `check_password_hash` on the "no such user" path in `/api/auth`) is still in place and still
+  exercised by `tests/test_auth_timing.py`.
+
+**Dependency scan.** `pip-audit -r requirements.txt` from a clean virtualenv: **no known
+vulnerabilities.** Also ran it against `requirements-dev.txt` (adds `pytest==9.1.1`): likewise
+clean. Checked every pinned package directly against PyPI's current release rather than trusting
+the audit tool's database alone: `Flask` (3.1.3), `Werkzeug` (3.1.8), `python-dotenv` (1.2.3),
+`itsdangerous` (2.2.0) and `pytest` (9.1.1) are each already the newest release in their line —
+unchanged since 2026-09-11. `gunicorn` still has a newer `26.2.0` upstream against the pinned
+`23.0.0`; not bumped, same reasoning as every prior sweep — it is a major-version jump with no CVE
+behind the pinned version, and `pip-audit` found nothing against it. **No dependency change made
+this pass** — there was no genuinely new CVE to fix, and the instructions for this pass are
+explicit that a bump is only warranted against one.
+
+**Git history.** Re-ran `git log -p --all` across the full history (40 commits, up from 38 at the
+2026-09-11 pass — the two new ones are the category-pill escaping fix and the username-enumeration
+timing fix, both already merged and reviewed as of that pass) for hardcoded secrets, plus targeted
+`-S` searches for `changeme123`, `AKIA` (AWS-style keys) and PEM private-key headers, plus a
+name-based scan for any committed `.env`/key/cert file. Nothing beyond what every prior sweep
+already knew about: the pre-`3fede78`, long-removed `ADMIN_PASSWORD = "changeme123"` placeholder,
+and test-only fixtures (`hunter2`, `test-secret-key`, `from-the-environment`). No `.env`, key, or
+certificate file has ever been committed; only `.env.example` (placeholders) exists.
+
+**Tests.** Full `pytest` suite: **88 passed**, unchanged from the 2026-09-11 count — expected,
+since no code changed this pass.
+
+**Suspicious content check.** No `AGENTS.md` or similar file exists anywhere in this repo
+(re-checked by filename across the whole tree). A keyword scan (`ignore previous instructions`,
+`disregard prior`, `you are now`, `system prompt`, and similar redirect-style phrasing) across
+`.py`/`.html`/`.md`/`.yml`/`.txt` files found nothing — the only place these words appear is this
+file's own audit history describing the check. Nothing found, same as every prior sweep.
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo (re-checked this pass), and no code
