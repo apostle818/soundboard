@@ -188,8 +188,61 @@ those are unrelated and were left exactly as they were. Regression tests:
 `tests/test_auth_timing.py` (asserts the call happens on both paths, functionally, rather than
 asserting on wall-clock timing — a timing assertion would be flaky under CI load).
 
+### Sweep (2026-09-21)
+
+Scheduled re-verification pass, no code changes. Re-checked line by line against the current
+`app.py`, `static/index.html`, `Dockerfile`, `requirements.txt` and git history rather than
+trusting the 2026-09-11 notes above — everything closed by the three prior sweeps still holds:
+`SECRET_KEY` still has no fallback and raises `RuntimeError` if unset/empty; `debug_enabled()`
+still requires the explicit `SOUNDBOARD_DEBUG` env var against an allowlist of truthy strings, and
+`app.run(debug=...)` still reads from it, never a literal `True`; `MAX_CONTENT_LENGTH` still bounds
+every request via `MAX_UPLOAD_MB`; `sniff_audio_extension()` still validates uploads by magic
+bytes, with the claimed extension only a pre-filter; every mutating `/api/...` route (`app.py:264`,
+`300`, `319`, `334`) still calls `check_token(...)` server-side; the security headers and CSP
+(`set_security_headers()`) are unchanged and set on every response; the `escHtml(JSON.stringify(c))`
+fix on the category-pill `onclick` is still in place, and every dynamic value written into
+`static/index.html` still goes through `escHtml()` (10 `innerHTML` writes, 14 `escHtml()` calls);
+the 2026-09-11 login-timing fix (`_DUMMY_PASSWORD_HASH`, checked on the unknown-user path so both
+branches pay the same `check_password_hash` cost) is still in place at `app.py:249`; the Dockerfile
+still runs as non-root `app` via gunicorn's `gthread` workers, never `flask run`.
+
+- **`pip-audit -r requirements.txt`: no known vulnerabilities**, same five pins as every prior
+  sweep (Flask 3.1.3, Werkzeug 3.1.8, gunicorn 23.0.0, python-dotenv 1.2.3, itsdangerous 2.2.0;
+  transitively blinker, click, jinja2, markupsafe — also clean). Checked PyPI directly for a newer
+  release *within the same pinned line*: none of the five have moved — Flask has no `3.1.4`,
+  Werkzeug's newest is still `3.1.8`, `gunicorn` has no `23.0.1` (the next release is `24.0.0`, a
+  major jump with no CVE behind `23.0.0`, same reasoning as every prior sweep), and python-dotenv
+  and itsdangerous are each already at their newest release overall. `pip-audit -r
+  requirements-dev.txt` (adds `pytest==9.1.1`) is also clean.
+- **One vulnerability class checked specifically and found already closed, not newly fixed:
+  CVE-2026-28684 (python-dotenv symlink-following path traversal in `set_key()`/`unset_key()`,
+  fixed in `1.2.2`).** This app pins `1.2.3`, already past the fix, and `pip-audit` confirms it
+  clean. Checked exploitability anyway since the pin predates this CVE's public disclosure: `app.py`
+  only calls `load_dotenv()` (read-only) and never `set_key`/`unset_key` (`grep` for `dotenv` in
+  `app.py`: one import, one call) — the vulnerable functions aren't reachable from this codebase
+  regardless of version. Recorded here so a future sweep doesn't re-flag an already-patched pin as
+  new.
+  Also checked and ruled out as irrelevant: CVE-2026-27205 (Flask, fixed above 3.1.2, already
+  documented in the 2026-09-07 sweep), CVE-2026-27641 (a `Flask-Reuploaded` path-traversal/RCE —
+  a different, unrelated PyPI package this app does not depend on), and the older
+  gunicorn/Werkzeug CVEs already covered by prior sweeps.
+- Re-scanned full git history (`git log -p --all` across all 40 commits, four more than the
+  2026-09-11 tally, plus a targeted `-S`/grep for AWS-style keys and PEM headers) for secrets:
+  nothing new. Only the already-known pre-`3fede78` `ADMIN_PASSWORD = "changeme123"` placeholder
+  (never a real credential) and the test-only dummy values already on record. No `.env`, key, or
+  certificate file has ever been added in any commit.
+- Ran the full `pytest` suite: **88 passed**, same count as the end of the 2026-09-11 sweep — no
+  regressions, no new tests needed since no code changed.
+- No `AGENTS.md` or similar file found this pass either (re-checked by filename across the whole
+  tree), and no code comment, commit message, or doc content attempts to redirect an agent's
+  behavior.
+
+**No code changes this pass** — every dependency is already at the newest release within its
+pinned line, no new CVE applies, and every standing protection re-verified against the live code.
+Doc-only update.
+
 ### Suspicious content check
 
-No `AGENTS.md` or similar file exists anywhere in this repo (re-checked this pass), and no code
-comment, commit message, or README content attempts to redirect what an agent working here should
-do. Nothing found in this sweep or either of the prior two.
+No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
+every prior pass), and no code comment, commit message, or README content attempts to redirect
+what an agent working here should do. Nothing found in this sweep or any of the prior ones.
