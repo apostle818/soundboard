@@ -241,6 +241,74 @@ still runs as non-root `app` via gunicorn's `gthread` workers, never `flask run`
 pinned line, no new CVE applies, and every standing protection re-verified against the live code.
 Doc-only update.
 
+### Sweep (2026-09-28)
+
+Scheduled re-verification pass, part of a fleet-wide sweep run from a dedicated worktree
+(`claude/nice-hopper-65i9g2`, branched from `main` at `a1ef424`, which already carried the
+2026-09-21 sweep's doc commit — no restart needed, the branch had no prior PR and no unmerged
+history to rebase). Re-checked line by line against the current `app.py`, `static/index.html`,
+`Dockerfile`, `requirements.txt` and git history rather than trusting the 2026-09-21 notes above —
+everything closed by the five prior sweeps still holds: `SECRET_KEY` (`app.py:23-29`) still has no
+fallback and raises `RuntimeError` if unset/empty; `debug_enabled()` (`app.py:359-366`) still
+requires the explicit `SOUNDBOARD_DEBUG` env var against an allowlist of truthy strings, and
+`app.run(debug=...)` (`app.py:369`) still reads from it, never a literal `True`;
+`MAX_CONTENT_LENGTH` (`app.py:34`) still bounds every request via `MAX_UPLOAD_MB`;
+`sniff_audio_extension()` (`app.py:163-183`) still validates uploads by magic bytes, with the
+claimed extension only a pre-filter (`app.py:278-281`); every mutating `/api/...` route
+(`app.py:264`, `300`, `319`, `334`) still calls `check_token(...)` server-side and 401s on
+failure; the security headers and CSP (`set_security_headers()`, `app.py:198-220`) are unchanged
+and set on every response via `after_request`; the `escHtml(JSON.stringify(c))` fix on the
+category-pill `onclick` (`static/index.html:948`) is still in place, and every dynamic value
+written into `static/index.html` still goes through `escHtml()` (14 `escHtml()` calls, matching
+the 2026-09-21 count); the 2026-09-11 login-timing fix (`_DUMMY_PASSWORD_HASH`, checked on the
+unknown-user path at `app.py:249` so both branches pay the same `check_password_hash` cost) is
+still in place; `rate_limited()` (`app.py:71-90`) is still backed by the shared SQLite
+`auth_attempts` table (a fresh connection per call against the on-disk `USERS_DB` path, not an
+in-process counter), so the per-IP count still holds across gunicorn's multiple worker processes;
+the Dockerfile still creates and switches to the fixed unprivileged `app` user (uid/gid 1000)
+before `gunicorn` runs, never `flask run`.
+
+- **Fixed — Werkzeug `3.1.8` → `3.1.9`, a same-line patch carrying a moderate security fix
+  published the day before this sweep.** `pip-audit -r requirements.txt` again reported **no known
+  vulnerabilities** at the previously-pinned `3.1.8` — this wasn't caught by the audit database,
+  the same gap the sibling `gesa-leanplan` repo's `CLAUDE.md` records for a PyJWT release under
+  identical circumstances. Checking PyPI directly (this pass's brief, not just trusting a clean
+  `pip-audit`) turned up Werkzeug `3.1.9`, released 2026-09-27 — one day before this sweep — whose
+  changelog fixes `GHSA-g6x2-hccm-hh4m` ("`safe_join()` allows Windows special device names with
+  empty ADS markers on NTFS"), moderate severity. This is the same vulnerability *class* as
+  CVE-2026-21860, which the 2026-09-07 sweep already assessed as Windows-only and irrelevant to
+  this app's Linux container deployment (`Dockerfile`'s base image is `python:3.12-slim`, and
+  `serve_sound()`'s `send_from_directory` call — the one `safe_join`-backed path in this app — only
+  ever runs there) — so this bump is precautionary, not a fix for a reachable bug. Taken anyway
+  because it's free: a same-line patch, no code change needed on this app's side, `pip install
+  Werkzeug==3.1.9` and the full suite reran clean (see below). `requirements.txt` now pins
+  `Werkzeug==3.1.9`; `pip-audit` stays clean after the bump. Flask (`3.1.3`, no `3.1.4` exists),
+  python-dotenv (`1.2.3`) and itsdangerous (`2.2.0`) are each still the newest release overall;
+  `gunicorn` still has a newer `26.2.0` upstream but that's a major jump with no CVE behind the
+  pinned `23.0.0` — **not bumped**, same reasoning as every prior sweep. `pip-audit -r
+  requirements-dev.txt` (adds `pytest==9.1.1`, also still the newest release) is clean too.
+- Re-scanned full git history (`git log -p --all` across all 42 commits, two more than the
+  2026-09-21 tally — both are the merge commit and the doc commit that landed that sweep's own
+  findings, confirmed by `git log --oneline -3`) for secrets, plus a targeted `-S`/grep for
+  AWS-style keys and PEM headers: nothing new. Only the already-known pre-`3fede78`
+  `ADMIN_PASSWORD = "changeme123"` placeholder (never a real credential, superseded by the current
+  per-user hashed `users.db` design) and the test-only dummy values already on record. `git log
+  --all --diff-filter=A --name-only | grep -i '\.env'` still turns up only `.env.example`; no real
+  `.env`, key, or certificate file has ever been added in any commit.
+- No `AGENTS.md` or similarly-named file anywhere in the repo (checked by filename across the
+  whole tree), and a keyword scan (`ignore previous instructions`, `disregard prior`, `you are
+  now`, `system prompt`, `new instructions`) across `.py`/`.md`/`.html`/`.yml` files found nothing
+  outside this file's own audit history describing that check. Nothing in this pass reads as an
+  attempt to redirect an agent's behavior — see "Suspicious content check" below, also re-confirmed.
+- Ran the full `pytest` suite twice: **88 passed** before the Werkzeug bump, **88 passed** after —
+  same count as every sweep since 2026-09-11, no regressions, no new test needed (the bump changed
+  no code this app calls in a way its own tests would need to cover; the fixed advisory is
+  Windows-only and this suite runs on Linux either way).
+
+**One dependency bump this pass (Werkzeug, patch-level, security-motivated, verified safe by
+re-running the full suite); everything else already at the newest release within its pinned line,
+no new CVE applicable, every standing protection re-verified against the live code.**
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
