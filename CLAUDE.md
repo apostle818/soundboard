@@ -309,6 +309,19 @@ before `gunicorn` runs, never `flask run`.
 re-running the full suite); everything else already at the newest release within its pinned line,
 no new CVE applicable, every standing protection re-verified against the live code.**
 
+### Sweep (2026-10-05)
+
+Scheduled re-verification pass on `claude/nice-hopper-7pbbmv`, which sat at `main` (`e139160`, the merge of the 2026-09-28 sweep). No code changes: doc-only update.
+
+- `pip-audit` against `requirements.txt` and `requirements-dev.txt`: **no known vulnerabilities**. Pins are unchanged since 2026-09-28 (Flask 3.1.3, Werkzeug 3.1.9, gunicorn 23.0.0, python-dotenv 1.2.3, itsdangerous 2.2.0, pytest 9.1.1).
+- **python-dotenv `1.2.4`** (released 2026-10-01) exists within the pinned line. Changelog read, not bumped on the number: it only fixes `dotenv get` exit codes for empty values, parsing of `KEY= # comment`, and `dotenv run --no-override` precedence. No security fix, and `app.py` only calls `load_dotenv()`. Left at `1.2.3`; take it with the next real bump. Flask, Werkzeug, itsdangerous and pytest are at their newest release; gunicorn's newest is still the `26.2.0` major jump with no CVE behind `23.0.0`, not bumped.
+- Standing protections re-read against `app.py`, `static/index.html` and `Dockerfile`: `SECRET_KEY` still raises `RuntimeError` when unset; `debug_enabled()` is still the only source of `app.run(debug=...)`; `MAX_CONTENT_LENGTH` set; `check_token(...)` on all four mutating routes; `rate_limited()` on `/api/auth` plus the `_DUMMY_PASSWORD_HASH` timing fix; no CORS layer; `USER app` and gunicorn `gthread` as the production `CMD`; 14 `escHtml()` calls against 11 `innerHTML` writes in `static/index.html`, unchanged in kind.
+- Full `git log -p --all` (45 refs/commits reachable) searched for AWS keys, PEM headers, GitHub/OpenAI/Slack token shapes: nothing. `git log --all --diff-filter=A` for `.env`/`.pem`/`.key` still returns only `.env.example`.
+- No `AGENTS.md` or similar file anywhere in the tree, and a keyword scan across `.py`/`.md`/`.html`/`.yml` found nothing outside this file's own audit history. Nothing tries to redirect an agent.
+- `pytest`: **88 passed**, none skipped, same count as 2026-09-28.
+
+The accepted tradeoffs and open items above (stateless tokens, per-IP limiter behind a proxy, public `GET /api/sounds`) are unchanged.
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
