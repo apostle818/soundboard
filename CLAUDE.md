@@ -309,6 +309,29 @@ before `gunicorn` runs, never `flask run`.
 re-running the full suite); everything else already at the newest release within its pinned line,
 no new CVE applicable, every standing protection re-verified against the live code.**
 
+### Sweep (2026-10-19)
+
+Scheduled re-verification pass, no code changes. The branch's earlier PR (#11) was already merged, so
+it was restarted from `origin/main` (`e139160`) before this entry. Re-checked against the current
+`app.py`, `static/index.html`, `Dockerfile`, `requirements*.txt` and git history: `SECRET_KEY` still
+has no fallback (`app.py:23-26`); `debug_enabled()` is still the only source for `app.run(debug=...)`;
+the Dockerfile still ends in `USER app`; there is no CORS layer anywhere; `static/index.html` still
+has 14 `escHtml()` calls against 11 `innerHTML` writes, the same as 2026-09-28.
+
+- **`pip-audit`** on `requirements.txt` and `requirements-dev.txt`: **no known vulnerabilities.**
+- **PyPI per pin:** Flask 3.1.3, Werkzeug 3.1.9, itsdangerous 2.2.0 and pytest 9.1.1 are each still
+  the newest release. `python-dotenv` 1.2.4 (2026-10-01) exists; its changelog has only `Fixed`
+  entries (empty-value parsing, `dotenv get`/`run` CLI behaviour) and no security section, and
+  `app.py` only calls `load_dotenv()`, so it was not bumped. `gunicorn` 26.2.0 is still a major jump
+  with no advisory against 23.0.0: deferred, as before.
+- **Git history** (`git log -p --all`, 47 commits): no AWS keys, PEM headers, `ghp_`/`sk-`/`xox`/`AIza`
+  tokens; `.env.example` is still the only env file ever added.
+- **No `AGENTS.md` or similar file**, and the keyword scan (`ignore previous instructions`,
+  `disregard prior`, `you are now`, `new instructions`) found nothing outside this file's own history.
+- `pytest`: **88 passed.**
+
+No dependency or code change was needed; doc-only update.
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
