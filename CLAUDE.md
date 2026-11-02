@@ -309,6 +309,21 @@ before `gunicorn` runs, never `flask run`.
 re-running the full suite); everything else already at the newest release within its pinned line,
 no new CVE applicable, every standing protection re-verified against the live code.**
 
+### Sweep (2026-11-02)
+
+Scheduled re-verification, no code changes. `main` (`e139160`, 49 commits, all refs) had not moved since
+the 2026-09-28 sweep; the branch was already identical to it.
+
+- `pip-audit -r requirements-dev.txt`: **no known vulnerabilities**. Newest on PyPI: Flask 3.1.3,
+  Werkzeug 3.1.9, itsdangerous 2.2.0 (all pinned at newest); python-dotenv 1.2.4 exists (pinned 1.2.3), its
+  changelog has only `Fixed` entries and no `Security` section, so not bumped; gunicorn 26.2.0 and pytest
+  9.2.0 are newer but are a major jump / no advisory, not bumped (bump on an advisory, not a version number).
+- Re-verified in code: `/api/auth` rate limit still in place (`app.py:230`), debugger only via
+  `SOUNDBOARD_DEBUG`, Dockerfile `USER app`, no CORS layer. `git log -p --all`: no AWS/PEM/`ghp_`/`sk-ant`/
+  `xox`/`AIza` hits in code; only `.env.example` ever added as an env file. No `AGENTS.md`; keyword scan
+  only matches this file's own history.
+- `pytest`: 88 passed. No Docker or browser available.
+
 ### Suspicious content check
 
 No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
