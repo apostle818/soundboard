@@ -309,8 +309,34 @@ before `gunicorn` runs, never `flask run`.
 re-running the full suite); everything else already at the newest release within its pinned line,
 no new CVE applicable, every standing protection re-verified against the live code.**
 
+### Sweep (2026-11-16)
+
+Scheduled re-verification pass, no code changes. Re-checked against the current `app.py`,
+`static/index.html`, `Dockerfile` and git history: `SECRET_KEY` still raises without a value,
+`debug_enabled()` is still opt-in, every mutating `/api/...` route still calls `check_token(...)`,
+no CORS layer, the category-pill `escHtml(JSON.stringify(c))` fix and the `_DUMMY_PASSWORD_HASH`
+timing fix are both still in place, and the Dockerfile still runs gunicorn as `USER app`.
+
+- **`pip-audit` on `requirements.txt` and `requirements-dev.txt`: no known vulnerabilities.**
+  PyPI per pin: Flask 3.1.3, Werkzeug 3.1.9 and itsdangerous 2.2.0 are still the newest release.
+  python-dotenv 1.2.4 (2026-10-01) and pytest 9.2.0 exist; the dotenv changelog (read from the
+  sdist) has only `Fixed` entries for CLI and parser edge cases, no security entry, so neither was
+  bumped.
+- **gunicorn: recommendation, needs a human decision.** The pin is still 23.0.0, and the newest
+  release is 27.0.1. There is no 23.x patch. Read from the 27.0.1 sdist's `docs/content/news.md`:
+  26.0.0's `Security` section adds HTTP/1.1 request-smuggling and header hardening (request-target
+  form checks, control characters in header values, `Content-Length` list form). 26.2.0 fixes an
+  HTTP/2 header-policy bypass, which does not apply here: `gthread` serves HTTP/1.1 only. None of
+  these has a CVE or GHSA, and `pip-audit` is clean on 23.0.0. The hardening matters most behind a
+  reverse proxy, which this app does not assume (see the rate-limiter tradeoff above). It is
+  four major versions up, so it is not bumped here; weigh it as a deliberate upgrade.
+- Git history (44 commits, all refs) for AWS/PEM/`ghp_`/`sk-ant`/`xox`/`AIza` patterns: no hits.
+  Only `.env.example` was ever added as an env file. No world-writable files.
+- No `AGENTS.md` or similar file, and no agent-steering text outside this file's own history.
+- `pytest`: **88 passed**. Docker and a browser were not available.
+
 ### Suspicious content check
 
-No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
+No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-11-16, and in
 every prior pass), and no code comment, commit message, or README content attempts to redirect
 what an agent working here should do. Nothing found in this sweep or any of the prior ones.
