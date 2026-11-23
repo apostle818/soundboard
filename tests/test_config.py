@@ -50,3 +50,18 @@ def test_debug_disabled_by_default(soundboard, monkeypatch, value):
 def test_debug_disabled_when_env_var_absent(soundboard, monkeypatch):
     monkeypatch.delenv("SOUNDBOARD_DEBUG", raising=False)
     assert soundboard.debug_enabled() is False
+
+
+def test_startup_fails_on_the_env_example_placeholder(monkeypatch, tmp_path):
+    # The value .env.example ships is public; `cp .env.example .env` must not
+    # produce a running app whose tokens anyone can forge.
+    monkeypatch.setenv("SECRET_KEY", "change-this-to-a-long-random-string")
+    with pytest.raises(RuntimeError, match="placeholder"):
+        _import_app_fresh(monkeypatch, tmp_path)
+
+
+def test_the_rejected_placeholder_is_the_one_env_example_ships():
+    from pathlib import Path
+    example = Path(__file__).resolve().parent.parent / ".env.example"
+    line = next(l for l in example.read_text().splitlines() if l.startswith("SECRET_KEY="))
+    assert line.split("=", 1)[1] == "change-this-to-a-long-random-string"

@@ -27,6 +27,16 @@ if not SECRET_KEY:
         "in the environment (or .env) before starting the app. Refusing to start with "
         "a generated key: it would silently invalidate every auth token on restart."
     )
+# Placeholder values this public repository has shipped. Starting with one would
+# sign every auth token with a key anyone can read on GitHub, so it is refused
+# just like an empty key. Extend this set if a new placeholder appears in docs.
+_REJECTED_SECRET_KEYS = {"change-this-to-a-long-random-string"}
+if SECRET_KEY.strip() in _REJECTED_SECRET_KEYS:
+    raise RuntimeError(
+        "SECRET_KEY is still the placeholder from .env.example. Generate a real one "
+        "with `openssl rand -hex 32`; the placeholder is public, so any token signed "
+        "with it can be forged."
+    )
 TOKEN_MAX_AGE = 86400  # 24 h
 
 # Cap request bodies so an upload cannot fill the disk. Applies to every route.
