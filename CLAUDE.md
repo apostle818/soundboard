@@ -309,8 +309,62 @@ before `gunicorn` runs, never `flask run`.
 re-running the full suite); everything else already at the newest release within its pinned line,
 no new CVE applicable, every standing protection re-verified against the live code.**
 
+### Sweep (2026-11-23)
+
+Scheduled re-verification pass on `claude/nice-hopper-dxiya7` (branched from `main` at `e139160`,
+which carries the 2026-09-28 sweep; 44 commits reachable from all refs). Eight weeks since the last
+pass, so this one re-read the code rather than the notes. Everything closed by the prior sweeps
+still holds: `SECRET_KEY` has no fallback; `debug_enabled()` is still the explicit-allowlist
+`SOUNDBOARD_DEBUG` check and production is gunicorn `gthread`; `MAX_CONTENT_LENGTH` bounds every
+request; uploads are stored under the extension `sniff_audio_extension()` derives from magic bytes;
+all four mutating `/api/...` routes call `check_token(...)`; `set_security_headers()` and the CSP are
+unchanged; `rate_limited()` is still SQLite-backed per IP; `_DUMMY_PASSWORD_HASH` is still checked on
+the unknown-user path; every user-controlled value written into `static/index.html` goes through
+`escHtml()` (14 calls; the only unescaped interpolations are server-generated UUIDs and accent
+variables from a fixed table); the Dockerfile still runs as `app` (uid 1000). No CORS layer, no
+world-writable files.
+
+- **Medium, fixed — the `.env.example` placeholder was accepted as a real `SECRET_KEY`.** The
+  startup check refused an unset or empty key, but `.env.example` ships
+  `SECRET_KEY=change-this-to-a-long-random-string`, and `README.md` tells you to
+  `cp .env.example .env`. Forget the edit and the app started, signing every auth token with a key
+  printed in this public repo — anyone could mint a token and use every mutating route. Now
+  `_REJECTED_SECRET_KEYS` refuses that value with the same `RuntimeError` as an empty key (extend the
+  set if a new placeholder appears in docs). Deliberately no minimum length: an existing deployment
+  with a short but private key would start failing on update, and that is a behaviour change for a
+  human to choose. Tests: `tests/test_config.py` (the refusal, plus a test that the rejected value
+  is exactly what `.env.example` ships, so the two cannot drift). Mutation-checked: with the check
+  disabled, the refusal test fails. **If a live stack was deployed with the placeholder, it will now
+  restart in a loop after this update — that is intended; set a real key.**
+- **Low, fixed — `python-dotenv` 1.2.3 → 1.2.4** (same line; CHANGELOG read in the sdist, no
+  `Security` heading). One of its fixes matters here: an unquoted empty value followed by a comment
+  (`SECRET_KEY= # set me`) used to parse as the comment text. Verified: 1.2.3 returns `'# set me'`,
+  1.2.4 returns `''`. So under 1.2.3 an "empty" key with a trailing comment passed the startup check
+  as an 8-character, guessable secret; under 1.2.4 it is empty and refused.
+- **Medium, documented recommendation, needs a human decision — `gunicorn` 23.0.0 → 27.x.** Still
+  no 23.x patch release and still nothing in `pip-audit`, but the upstream changelog (`news.md` in
+  the 27.0.1 sdist) now carries `Security` sections in 24.0.0, 25.3.0, 26.0.0, 26.1.0 and 26.2.0, and
+  26.0.0/27.0.0 are a run of HTTP/1.1 request-smuggling hardening (Transfer-Encoding not ending in
+  `chunked`, non-digit `Content-Length`, `Content-Length` lists, chunk data without CRLF, control
+  characters in the path and header values, request-target forms). Unlike the sibling repos that
+  noted this, **this app has no reverse proxy in front**: `docker-compose.yml` publishes gunicorn's
+  port directly, so the parser *is* the edge. The practical impact is small without a cache or proxy
+  to desync, but it is the strongest case yet for the bump. Not bumped inline: it is four majors,
+  27.0.0 lists a breaking change (400 on `Transfer-Encoding: identity`), and no Docker daemon was
+  available to smoke-test the image. Prefer 27.0.1; run the suite and a `docker compose up` plus an
+  upload/playback by hand.
+- **Checked, not bumped (no advisory):** Flask 3.1.3, Werkzeug 3.1.9 and itsdangerous 2.2.0 are the
+  newest releases. `pytest` 9.2.0 exists (pinned 9.1.1, dev-only); its changelog's only CVE entry
+  (CVE-2025-71176, insecure temp dir) was fixed in 9.0.3, already below our pin.
+- `pip-audit -r requirements.txt` and `-r requirements-dev.txt`: **no known vulnerabilities**,
+  before and after.
+- Git history (`git log -p --all`, 44 commits) for PEM headers, AWS, `ghp_`, `sk-ant`, `xox`, `AIza`:
+  no hits. `git log --all --diff-filter=A` shows only `.env.example` ever added; no key or cert file.
+- `pytest`: **88 passed** before, **90 passed** after (the two new config tests).
+- No `AGENTS.md` or similar file; the keyword scan found nothing outside this file.
+
 ### Suspicious content check
 
-No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-09-21, and in
+No `AGENTS.md` or similar file exists anywhere in this repo (re-checked on 2026-11-23, and in
 every prior pass), and no code comment, commit message, or README content attempts to redirect
 what an agent working here should do. Nothing found in this sweep or any of the prior ones.
